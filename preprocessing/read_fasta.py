@@ -126,13 +126,17 @@ def get_info(data,id):
     subcell_location, goa, interactant_id_one,interactant_id_two = four_info
     if len(subcell_location) == 0:
         subcell_location.append('N\A')
+    subcell_location_data = {"subcell_location":subcell_location}
     if len(goa) == 0:
         goa.append('N\A')
+    goa_data = {"goa":goa}
     if len(interactant_id_one) == 0:
         interactant_id_one.append('N\A')
+    interactant_id_one_data = {"interactant_id_one":interactant_id_one}
     if len(interactant_id_two) == 0:
         interactant_id_two.append('N\A')
-    result_dict[id] =[ox_data,sequence_data,os_data,subcell_location,goa,interactant_id_one,interactant_id_two]
+    interactant_id_two_data = {"interactant_id_two":interactant_id_two}
+    result_dict[id] =[ox_data,sequence_data,os_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data]
 
     return result_dict
 
@@ -159,7 +163,7 @@ def all_data(ids,proteins):
 
 if __name__ == "__main__":
     id_list, protein_dict = read_fasta("small_test.fasta")
-    ids,proteins= repeated_protein("small_test.fasta", "train_sequences_from_kaggle.fasta")
+    ids,proteins= repeated_protein("small_test.fasta", "small_test.fasta")
 
     # print(proteins[ids[0]].description)
     # print(extract(proteins[ids[0]].description))
