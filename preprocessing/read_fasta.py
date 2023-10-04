@@ -65,43 +65,58 @@ def get_protein_json(accession_id):
     we didn't get the residue cause the protein sequence is the residue, they can be translated through a table
     '''
     uniprot_url = "https://rest.uniprot.org/uniprotkb/{accession_id}?format=json"
-    url = uniprot_url.format(accession_id = accession_id)
+    url = uniprot_url.format(accession_id = accession_id) 
     uniprot_response = requests.get(url).json()
 
     subcell_location = []
     goa = []
     interactant_id_one = []
     interactant_id_two = []
-    comments = uniprot_response.get('comments')
+    motif_pair = []
+    comments = uniprot_response.get('comments') 
 
     # subcellular location
-    if comments != None:
-        for comment in comments:
-            if comment['commentType']  == "SUBCELLULAR LOCATION":
-                for location in comment['subcellularLocations']:
+    if comments != None: 
+        for comment in uniprot_response['comments']:
+            if comment['commentType']  == "SUBCELLULAR LOCATION": 
+                for location in comment['subcellularLocations']: 
                     subcell_location.append(location['location']['value'])
-            # interactant
-            if comment['commentType']  == "INTERACTION":
-                for interactant in comment['interactions']:
+            
+            # interactant 
+            if comment['commentType']  == "INTERACTION": 
+                for interactant in comment['interactions']: 
                     one = interactant['interactantOne'].get('uniProtKBAccession')
                     two = interactant['interactantTwo'].get('uniProtKBAccession')
                     if one != None:
                         interactant_id_one.append(interactant['interactantOne']['uniProtKBAccession'])
                     if two != None:
                         interactant_id_two.append(interactant['interactantTwo']['uniProtKBAccession'])
+
     else:
         subcell_location.append("N\A")
         interactant_id_one.append("N\A")
         interactant_id_two.append("N\A")
-
-    # GOA
+    
     KBC = uniprot_response.get('uniProtKBCrossReferences')
-    if KBC != None:
+    motif = uniprot_response.get('features')
+    # GOA
+    if KBC != None: 
         for ref in uniprot_response['uniProtKBCrossReferences']:
             if ref['database'] == 'GO':
                 goa.append(ref['id'])
+    else: 
+        goa = 'NA'
+    
+    if motif != None: 
+        for motif in uniprot_response['features']: 
+            if motif['type'] == 'Motif': 
+                motif_loc = [motif['location']['start']['value'], motif['location']['end']['value']]
+                motif_pair.append(motif_loc)
+    else: 
+        motif_pair = [0]
 
-    return subcell_location, goa, interactant_id_one, interactant_id_two
+
+    return subcell_location, goa, interactant_id_one, interactant_id_two, motif_pair
 
 def get_info(data,id):
     '''We have ids and proteins. Proteins is a dictionary with id as key, ID/Name/Description...as value. The goal of this function is to form a dictionary of dictionary. The format is like this:
@@ -122,17 +137,19 @@ def get_info(data,id):
     ox_data = {"OX":OX_value}
     sequence_data = {"sequence":sequence}
     os_data = {"OS":OS_value}
-    four_info = get_protein_json(id)
-    subcell_location, goa, interactant_id_one,interactant_id_two = four_info#！！！！！！！！！！！！！！！！！！！第一个，把motif加进去
-
-    if(len(subcell_location) != 0 and len(goa) != 0 and len(interactant_id_one) != 0 and len(interactant_id_two) != 0 and len(sequence) <= 5000):#第二个！！！！！！！！！！！！！！！！！把 and （len motif = 0）加进去
+    five_info = get_protein_json(id)
+    subcell_location, goa, interactant_id_one,interactant_id_two, motif = five_info
+    if(len(subcell_location) != 0 and len(goa) != 0 
+                                  and len(interactant_id_one) != 0 
+                                  and len(interactant_id_two) != 0 
+                                  and len(sequence) <= 5000):
         subcell_location_data = {"subcell_location":subcell_location}
         goa_data = {"goa":goa}
         interactant_id_one_data = {"interactant_id_one":interactant_id_one}
         interactant_id_two_data = {"interactant_id_two":interactant_id_two}
+        motif_data = {"motif_loc":motif}
 
-        #第三个！！！！！！！！！！！！！！！！！！！！！1 motif_data = {},然后下一行把motif加进result_dict
-        result_dict[id] =[ox_data,sequence_data,os_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data] #number 4 ！！！！！！！！！！！！！！！！！！！！这儿！
+        result_dict[id] =[ox_data,sequence_data,os_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data, motif_data] #number 4 ！！！！！！！！！！！！！！！！！！！！这儿！
 
 
     return result_dict
@@ -148,7 +165,7 @@ def transfer_to_pandas(data):
 
     # Create a DataFrame from the restructured data
     df = pd.DataFrame(data_list)
-    df.to_csv('sample_data.csv', index=False);
+    df.to_csv('sample_data.csv', index=False)
     return df
 
 def all_data(ids, proteins):
