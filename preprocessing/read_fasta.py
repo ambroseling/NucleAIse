@@ -105,7 +105,7 @@ def get_protein_json(accession_id):
 
 def get_info(data,id):
     '''We have ids and proteins. Proteins is a dictionary with id as key, ID/Name/Description...as value. The goal of this function is to form a dictionary of dictionary. The format is like this:
-    {‘ID’：{‘OX’: OX_number}, {’sequence’: sequence_string}, {‘OS’: OS_number}.}
+    {‘ID’:{‘OX’: OX_number}, {’sequence’: sequence_string}, {‘OS’: OS_number}.}
     Inputs: id is the key, such as P79742. the type of data is SeqRecord, which is the same as proteins
     '''
     result_dict = {}
@@ -123,20 +123,17 @@ def get_info(data,id):
     sequence_data = {"sequence":sequence}
     os_data = {"OS":OS_value}
     four_info = get_protein_json(id)
-    subcell_location, goa, interactant_id_one,interactant_id_two = four_info
-    if len(subcell_location) == 0:
-        subcell_location.append('N\A')
-    subcell_location_data = {"subcell_location":subcell_location}
-    if len(goa) == 0:
-        goa.append('N\A')
-    goa_data = {"goa":goa}
-    if len(interactant_id_one) == 0:
-        interactant_id_one.append('N\A')
-    interactant_id_one_data = {"interactant_id_one":interactant_id_one}
-    if len(interactant_id_two) == 0:
-        interactant_id_two.append('N\A')
-    interactant_id_two_data = {"interactant_id_two":interactant_id_two}
-    result_dict[id] =[ox_data,sequence_data,os_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data]
+    subcell_location, goa, interactant_id_one,interactant_id_two = four_info#！！！！！！！！！！！！！！！！！！！第一个，把motif加进去
+
+    if(len(subcell_location) != 0 and len(goa) != 0 and len(interactant_id_one) != 0 and len(interactant_id_two) != 0 and len(sequence) <= 5000):#第二个！！！！！！！！！！！！！！！！！把 and （len motif = 0）加进去
+        subcell_location_data = {"subcell_location":subcell_location}
+        goa_data = {"goa":goa}
+        interactant_id_one_data = {"interactant_id_one":interactant_id_one}
+        interactant_id_two_data = {"interactant_id_two":interactant_id_two}
+
+        #第三个！！！！！！！！！！！！！！！！！！！！！1 motif_data = {},然后下一行把motif加进result_dict
+        result_dict[id] =[ox_data,sequence_data,os_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data] #number 4 ！！！！！！！！！！！！！！！！！！！！这儿！
+
 
     return result_dict
 
@@ -151,13 +148,15 @@ def transfer_to_pandas(data):
 
     # Create a DataFrame from the restructured data
     df = pd.DataFrame(data_list)
+    df.to_csv('sample_data.csv', index=False);
     return df
 
-def all_data(ids,proteins):
+def all_data(ids, proteins):
     whole_dict = {}
-    length = len(ids)
     for id in ids:
-        whole_dict.update(get_info(proteins[id],id))
+        result_dict = get_info(proteins[id], id)
+        if result_dict:  # Check if result_dict is not empty
+            whole_dict.update(result_dict)
     return transfer_to_pandas(whole_dict)
 
 
