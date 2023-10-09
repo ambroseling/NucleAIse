@@ -38,8 +38,9 @@ A = [
 H = torch.rand(N,F)
 
 class GAN(nn.Module):
-    def __init__(self,N,F,F_prime):
+    def __init__(self,N,F,F_prime,num_heads):
         super(GAN,self).__init__()
+        self.num_heads = num_heads
         self.N = N
         self.F = F
         self.F_prime = F_prime
