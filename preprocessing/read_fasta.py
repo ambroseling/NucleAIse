@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import string
 import re
-
+import time
 def read_fasta(filename):
     '''
     Based on the data we gather, from kaggle(had been cleaned), UniRef50(consists most of our data), and Uniprot SP(Swiss prot)；
@@ -149,7 +149,7 @@ def get_info(data,id):
         interactant_id_two_data = {"interactant_id_two":interactant_id_two}
         motif_data = {"motif_loc":motif}
 
-        result_dict[id] =[ox_data,sequence_data,os_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data, motif_data] #number 4 ！！！！！！！！！！！！！！！！！！！！这儿！
+        result_dict[id] =[ox_data,sequence_data,os_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data, motif_data]
 
 
     return result_dict
@@ -178,6 +178,7 @@ def all_data(ids, proteins):
 
 
 if __name__ == "__main__":
+    start = time.time()
     id_list, protein_dict = read_fasta("small_test.fasta")
     ids,proteins= repeated_protein("small_test.fasta", "small_test.fasta")
 
@@ -186,4 +187,6 @@ if __name__ == "__main__":
     # print(get_info(proteins[ids[1]],ids[1]))
     # print(transfer_to_pandas(get_info(proteins[ids[0]],ids[0])))
     print(all_data(ids,proteins))
+    end = time.time();
+    print(end-start);
 
