@@ -1,12 +1,10 @@
 import requests
 from Bio import SeqIO
 from Bio.Seq import Seq
-import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
-import string
-import re
 import time
+import re
+
 def read_fasta(filename):
     '''
     Based on the data we gather, from kaggle(had been cleaned), UniRef50(consists most of our data), and Uniprot SP(Swiss prot)；
@@ -93,9 +91,9 @@ def get_protein_json(accession_id):
                         interactant_id_two.append(interactant['interactantTwo']['uniProtKBAccession'])
 
     else:
-        subcell_location.append("N\A")
-        interactant_id_one.append("N\A")
-        interactant_id_two.append("N\A")
+        subcell_location = []
+        interactant_id_one = []
+        interactant_id_two =[]
     
     KBC = uniprot_response.get('uniProtKBCrossReferences')
     motif = uniprot_response.get('features')
@@ -105,7 +103,7 @@ def get_protein_json(accession_id):
             if ref['database'] == 'GO':
                 goa.append(ref['id'])
     else: 
-        goa = 'NA'
+        goa = []
     
     if motif != None: 
         for motif in uniprot_response['features']: 
@@ -137,19 +135,21 @@ def get_info(data,id):
     ox_data = {"OX":OX_value}
     sequence_data = {"sequence":sequence}
     os_data = {"OS":OS_value}
-    five_info = get_protein_json(id)
-    subcell_location, goa, interactant_id_one,interactant_id_two, motif = five_info
+    four_info = get_protein_json(id)
+    subcell_location, goa, interactant_id_one,interactant_id_two, motif = four_info#！！！！！！！！！！！！！！！！！！！第一个，把motif加进去
+
     if(len(subcell_location) != 0 and len(goa) != 0 
-                                  and len(interactant_id_one) != 0 
-                                  and len(interactant_id_two) != 0 
-                                  and len(sequence) <= 5000):
+                                  and len(interactant_id_one) > 0
+                                  and len(interactant_id_two) > 0 
+                                  and len(sequence) <= 5000):#第二个！！！！！！！！！！！！！！！！！把 and （len motif = 0）加进去
         subcell_location_data = {"subcell_location":subcell_location}
         goa_data = {"goa":goa}
         interactant_id_one_data = {"interactant_id_one":interactant_id_one}
         interactant_id_two_data = {"interactant_id_two":interactant_id_two}
         motif_data = {"motif_loc":motif}
 
-        result_dict[id] =[ox_data,sequence_data,os_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data, motif_data]
+        #第三个！！！！！！！！！！！！！！！！！！！！！1 motif_data = {},然后下一行把motif加进result_dict
+        result_dict[id] =[ox_data,sequence_data,os_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data, motif_data] #number 4 ！！！！！！！！！！！！！！！！！！！！这儿！
 
 
     return result_dict
@@ -178,15 +178,15 @@ def all_data(ids, proteins):
 
 
 if __name__ == "__main__":
-    start = time.time()
+    start=time.time()
     id_list, protein_dict = read_fasta("small_test.fasta")
-    ids,proteins= repeated_protein("small_test.fasta", "small_test.fasta")
+    mid = time.time()
+    # ids,proteins= repeated_protein("small_test.fasta", "small_test.fasta")
 
     # print(proteins[ids[0]].description)
     # print(extract(proteins[ids[0]].description))
     # print(get_info(proteins[ids[1]],ids[1]))
     # print(transfer_to_pandas(get_info(proteins[ids[0]],ids[0])))
-    print(all_data(ids,proteins))
-    end = time.time();
-    print(end-start);
-
+    print(all_data(id_list, protein_dict))
+    end = time.time() 
+    print("Read Fasta take:", (mid-start), '/n', "All data took:" ,(end - mid), '/n', 'Over all took:' ,(end - start))
