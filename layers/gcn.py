@@ -1,5 +1,5 @@
 import torch
-import numpy 
+import numpy as np
 import torch.nn as nn
 import networkx as nx
 
@@ -20,26 +20,18 @@ class GCN(nn.Module):
         return self.activation(self.W(torch.matmul(torch.matmul(torch.matmul(D,A),D),X)))
 
 class GCN_layer(nn.Module):
-    def __init__(self):
+    def __init__(self, embed_dim = [2,1024,1024,2048]):
         super(GCN_layer,self).__init__()
-        self.gcn1 = GCN(2,3)
-        self.gcn2 = GCN(3,4)
-        self.gcn3 = GCN(4,5)
+        self.gcn = [GCN(embed_dim[i],embed_dim[i+1]) for i in range(len(embed_dim)-1)]
         self.softmax = nn.Softmax(dim=1)
     def forward(self,X,A,normalized):
         #Inputs N x C
         if normalized:
-            return self.softmax(self.gcn3(self.gcn2(self.gcn1(X,A),A)+X,A))
-        else:
-            return self.gcn3(self.gcn2(self.gcn1(X,A),A),A)
+            print(len(self.gcn))
+            for layer in self.gcn:
+                X = layer(X,A)
+            return self.softmax(X)
         #Outputs N x F
-
-
-# class Dense_GCN_layer(nn.Module):
-#     def __init__(self):
-#         self.bs = bs
-
-#     def forward(self,X,A):
 
 A = [
     [0,1,0,0,0],
@@ -48,8 +40,9 @@ A = [
     [0,0,1,0,0],
     [0,0,1,0,0]
 ]
-
-X = torch.rand(5,2)
-layer = GCN_layer()
-output = layer(X,A,True)
-print(output)
+A = np.where(np.array(A)>0)
+print(A)
+# X = torch.rand(5,2)
+# layer = GCN_layer()
+# output = layer(X,A,True)
+# print('Done')
