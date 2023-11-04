@@ -1,7 +1,7 @@
 import requests
 from Bio.PDB import *
 import numpy as np
-import matplotlib.pyplot as plt
+import json
 
 class Protein:
     def __init__(
@@ -80,6 +80,8 @@ def get_proteins_by_organism(organism_id, limit=1000):
         alphafold_base_url = "https://alphafold.ebi.ac.uk/api/prediction/{accession_id}?key=AIzaSyCeurAJz7ZGjPQUtEaerUkBZ3TaBkXrY94"
         alphafold_url = alphafold_base_url.format(accession_id=accession_id)
         alphafold_response = requests.get(alphafold_url)
+        print("AlphaFold Response")
+        print(json.dumps(alphafold_response.json()[0], indent=2))
         # Get Residues from PDB 3D representation
         pdb_url = alphafold_response.json()[0]["pdbUrl"]
         pdb_response = requests.get(pdb_url, allow_redirects=True)
@@ -134,4 +136,4 @@ def get_proteins_by_organism(organism_id, limit=1000):
 
 
 if __name__ == "__main__":
-    get_proteins_by_organism(9606, limit=10)
+    get_proteins_by_organism(9606, limit=1)
