@@ -38,7 +38,7 @@ def repeated_protein(file1, file2):
 
 def extract(sentence): #This function is used to extract OX,OS information from protein_dict->description
     # Define regular expressions to match the patterns "OS=..." and "OX=..."
-    os_pattern = r'OS=([^\s]+)'
+    os_pattern = r'OS=([^OX]+)'
     ox_pattern = r'OX=([^\s]+)'
 
     # Use regular expressions to find matches in the sentence
@@ -135,6 +135,7 @@ def get_info(data,id):
     ox_data = {"OX":OX_value}
     sequence_data = {"sequence":sequence}
     os_data = {"OS":OS_value}
+    print(os_data)
     four_info = get_protein_json(id)
     subcell_location, goa, interactant_id_one,interactant_id_two, motif = four_info#！！！！！！！！！！！！！！！！！！！第一个，把motif加进去
 
