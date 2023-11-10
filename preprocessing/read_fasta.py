@@ -40,10 +40,12 @@ def extract(sentence): #This function is used to extract OX,OS information from 
     # Define regular expressions to match the patterns "OS=..." and "OX=..."
     os_pattern = r'OS=([^OX]+)'
     ox_pattern = r'OX=([^\s]+)'
+    gn_pattern = r'GN=([^\s]+)'
 
     # Use regular expressions to find matches in the sentence
     os_match = re.search(os_pattern, sentence)
     ox_match = re.search(ox_pattern, sentence)
+    gn_match = re.search(gn_pattern, sentence)
     # Check if matches were found and extract the values
     if os_match:
         os_value = os_match.group(1)
@@ -54,7 +56,12 @@ def extract(sentence): #This function is used to extract OX,OS information from 
         ox_value = ox_match.group(1)
     else:
         ox_value = None
-    return os_value,ox_value
+        
+    if gn_match:  # Added check for GN
+        gn_value = gn_match.group(1).strip()
+    else:
+        gn_value = None
+    return os_value,ox_value,gn_value
 
 def get_protein_json(accession_id):
     '''
@@ -130,12 +137,14 @@ def get_info(data,id):
     #
     # # Extract the substring between single quotes
     # sequence = seq_to_string[start_index:end_index]
-    pair = extract(description_string)
-    OS_value,OX_value = pair
+    triple = extract(description_string)
+    OS_value,OX_value,GN_value = triple
+    gn_data = {"GN":GN_value}
+    # print(gn_data)
     ox_data = {"OX":OX_value}
     sequence_data = {"sequence":sequence}
     os_data = {"OS":OS_value}
-    print(os_data)
+    # print(os_data)
     four_info = get_protein_json(id)
     subcell_location, goa, interactant_id_one,interactant_id_two, motif = four_info#！！！！！！！！！！！！！！！！！！！第一个，把motif加进去
 
@@ -150,7 +159,7 @@ def get_info(data,id):
         motif_data = {"motif_loc":motif}
 
         #第三个！！！！！！！！！！！！！！！！！！！！！1 motif_data = {},然后下一行把motif加进result_dict
-        result_dict[id] =[ox_data,sequence_data,os_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data, motif_data] #number 4 ！！！！！！！！！！！！！！！！！！！！这儿！
+        result_dict[id] =[ox_data,sequence_data,os_data,gn_data,subcell_location_data,goa_data,interactant_id_one_data,interactant_id_two_data, motif_data] #number 4 ！！！！！！！！！！！！！！！！！！！！这儿！
 
 
     return result_dict
