@@ -2,14 +2,12 @@ import torch
 from torch_geometric.data import InMemoryDataset
 from Bio.PDB import *
 import numpy as np
-import matplotlib as mpl
 import os
 from csv import DictReader
 import shutil
 import dotenv
 import requests
-import pylab
-import json
+from tqdm import tqdm
 dotenv.load_dotenv()
 
 class GNNDataset(InMemoryDataset):
@@ -45,7 +43,7 @@ class GNNDataset(InMemoryDataset):
         missing_pdbs = []
         alphafold_url_template = os.environ.get('alphafold_url_template')
         count = 0
-        for protein in dataset:
+        for protein in tqdm(dataset):
             if self.limit is not None and count > self.limit:
                 break
             accession_id = protein["ID"]
@@ -63,13 +61,13 @@ class GNNDataset(InMemoryDataset):
                 residue_count = len(ca_coord)   
                 contact_map = np.zeros((residue_count, residue_count))
                 for i in range(residue_count):
-                    for j in range(residue_count):
+                    for j in range(i, residue_count):
                         contact_map[i][j] = np.linalg.norm(ca_coord[i]-ca_coord[j])
+                        contact_map[j][i] = contact_map[i][j]
                         
                 contact_map_tensors[accession_id] = torch.tensor(contact_map)
                 
             else:
-                print("No PDB for " + str(accession_id) + " could be found")
                 missing_pdbs.append(accession_id)
             
             count += 1
@@ -81,7 +79,7 @@ class GNNDataset(InMemoryDataset):
                 missing_pdb_file.write(pdb + "\n")
 
 
-test = GNNDataset(os.getcwd() + "/models/gnn", limit=10)
+test = GNNDataset(os.getcwd() + "/models/gnn")
 
 contact_maps = torch.load("models/gnn/processed/contact_maps.pt")
 
