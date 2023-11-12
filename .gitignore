@@ -1,1 +1,2 @@
-feature_matrix.pt
+/models/gnn/raw
+/models/gnn/processed
