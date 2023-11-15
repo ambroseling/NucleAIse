@@ -3,6 +3,17 @@ import torchvision
 import numpy as np
 #Class based hierarchical loss https://www.ijcai.org/proceedings/2021/0337.pdf
 class HCLLoss:
+    #Input to HCLLoss class:
+    #   num_classes: number of classes we have in total
+    #   edge_index: edge list that shows how the classes in your hierachy are connected
+    #   pred_prob: logits from the last layer, assume normalized
+    #   labels: the ground truth of the sample
+    #    pred and labels have shape (num_samples or batch size,num_go_functions)
+    #   thresh: a value controlling the amount of classes that contribute to the loss (needs to be experimented with)
+    #Ouput of HCLLoss class:
+    #   thresh_loss: the final loss value to be used for backprop 
+    #   selected: the class indices that contributed to the loss
+
     def __init__(self,edge_index,num_classes,thresh):
         self.num_classes = num_classes
         self.base_loss = torch.nn.BCELoss(reduction="none")
@@ -70,6 +81,12 @@ class HCLLoss:
 
 #CHMLCN https://arxiv.org/pdf/2010.10151v1.pdf
 class MCLoss():
+    #Input to MCLoss:
+    #   subclass matrix: similar to adjacency matrix, each row represents the classes j that are subclasses of class i
+    #   pred_prob: logits from the last layer, assume normalized
+    #   labels: the ground truth of the sample
+    #Output of MCLoss:
+    #   computes the loss and outputs it, used for backprop
     def __init__(self,device="cpu",subclass_matrix=None):
         ''' 
         '''
@@ -98,8 +115,11 @@ def main():
     edge_index = np.array([[1,3,0,2,2],[0,0,2,4,5]])
     num_classes = pred_prob.shape[-1]
     thresh = 2
+    
     hcl = HCLLoss(edge_index=edge_index,num_classes=num_classes,thresh=thresh)
     thresh_loss,selected = hcl.compute_loss(pred_prob,labels)
+    #thresh loss is the final loss value
+    # can apply thresh.backward() here
     print("Thresh loss: ",thresh_loss)
     print("Selected nodes: ",selected)
 
@@ -114,7 +134,7 @@ def main():
     mcl = MCLoss("cpu", subclass_matrix)
     mcl_loss = mcl.compute_loss(pred_prob,labels)
     print("MCL Loss: ",mcl_loss)
-    #MCLoss works, yet to be verified, need to also find justification for this loss function
+    #MCLoss works
 
 if __name__ == "__main__":
     main()
