@@ -88,3 +88,15 @@ class GNNBlock(Module):
             x = F.relu(x)
         
         return x
+
+
+class ResnetCMaps():
+    def __init__ (self):
+        self.model = torchvision.models.resnet50()
+        for param in self.model.parameters():
+            param.requires_grad = False
+        self.model.fc = nn.Linear()
+    def forward(self,x): #x is residue 
+        x = self.model(x)
+        return x
+
