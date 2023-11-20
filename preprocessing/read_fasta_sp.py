@@ -254,8 +254,8 @@ def process_and_save_data_files(data_files, output_dir, num_processes=8):
     
 if __name__ == "__main__":
     
-    # all_data('preprocessing\\New folder\\small_test.fasta' , 'test.csv')
-    savefiles = list_files_in_folder("preprocessing\\data\\batched_sp_db")
+    # all_data('preprocessing\\New folder\\small_test.fasta' , 'test.csv')s
+    savefiles = list_files_in_folder("preprocessing/data/batched2_sp")
     print('start')
     # print(savefiles)
     # savefiles = ['preprocessing\\New folder\\small_test.fasta', 'preprocessi
