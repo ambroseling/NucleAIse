@@ -1,5 +1,6 @@
 from Bio import SeqIO
 import pandas as pd 
+from read_fasta_sp import list_files_in_folder
                                                            
 # from SeqIO.website         
 def batch_iterator(fasta_iter, batch_size):
@@ -31,7 +32,8 @@ def length_iter(filename):
             count += 1
     return count 
 
-
+def combine(files):
+    return None 
 
 if __name__ == "__main__":
     filename = 'preprocessing\\data\\uniref50_batched\\group_1.fastq'
