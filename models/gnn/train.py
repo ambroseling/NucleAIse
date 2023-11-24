@@ -1,5 +1,7 @@
 import torch
-from torch_geometric.data import InMemoryDataset
+from torch_geometric.loader.dataloader import DataLoader
+from torch_geometric.data import InMemoryDataset, Data
+from torch_geometric.utils import to_edge_index
 from Bio.PDB import *
 import numpy as np
 import os
@@ -11,7 +13,7 @@ from tqdm import tqdm
 dotenv.load_dotenv()
 
 class GNNDataset(InMemoryDataset):
-    def __init__(self, root, transform=None, pre_transform=None, pre_filter=None, limit=None):
+    def __init__(self, root, train=True, transform=None, pre_transform=None, pre_filter=None, limit=None):
         self.limit = limit
         super().__init__(root, transform, pre_transform, pre_filter)
 
@@ -21,7 +23,7 @@ class GNNDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return [os.environ.get("output_pt")]
+        return [os.environ.get("train_set_file"), os.environ.get("test_set_file")]
 
     def download(self):
         # If all files in raw_file_names are not present in self.raw_dir, get them
@@ -39,7 +41,7 @@ class GNNDataset(InMemoryDataset):
             dataset = list(DictReader(dataset_csv))
             
         parser = PDBParser()
-        contact_map_tensors = {}
+        datalist = []
         missing_pdbs = []
         alphafold_url_template = os.environ.get('alphafold_url_template')
         count = 0
@@ -62,24 +64,37 @@ class GNNDataset(InMemoryDataset):
                 contact_map = np.zeros((residue_count, residue_count))
                 for i in range(residue_count):
                     for j in range(i, residue_count):
-                        contact_map[i][j] = np.linalg.norm(ca_coord[i]-ca_coord[j])
+                        distance = np.linalg.norm(ca_coord[i]-ca_coord[j])
+                        if distance > 6:
+                            contact_map[i][j] = 1
+                        else:
+                            contact_map[i][j] = 0
                         contact_map[j][i] = contact_map[i][j]
                         
-                contact_map_tensors[accession_id] = torch.tensor(contact_map)
-                
+                node_features = []
+                for i in range(residue_count):
+                    # TODO: Apply ProtBERT Embeddings
+                    pass
+                edge_index, edge_attr = to_edge_index(torch.tensor(contact_map).to_sparse())
+                datalist.append(Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr))
             else:
                 missing_pdbs.append(accession_id)
             
             count += 1
 
-        torch.save(contact_map_tensors, os.path.join(self.processed_dir, os.environ.get("output_pt")))
+        train_size = int(0.8 * len(datalist))
+        test_size = len(datalist) - train_size
+        train_dataset, test_dataset = torch.utils.data.random_split(datalist, [train_size, test_size])
+        torch.save(train_dataset, self.processed_paths[0])
+        torch.save(test_dataset, self.processed_paths[1])
 
         with open(os.path.join(self.raw_dir, "missing_pdbs.txt"), "w") as missing_pdb_file:
             for pdb in missing_pdbs:
                 missing_pdb_file.write(pdb + "\n")
 
 
-test = GNNDataset(os.getcwd() + "/models/gnn")
+dataset = GNNDataset(os.getcwd() + "/models/gnn", limit=10)
+loader = DataLoader(dataset=dataset, batch_size=64, shuffle=True)
 
-contact_maps = torch.load("models/gnn/processed/contact_maps.pt")
+
 
