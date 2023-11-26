@@ -57,4 +57,4 @@ def main():
     model = GNN(model_params)
     protocol = Protocol(training_params)
     protocol.load_data()
-    protocol.train()
+    protocol.train(model)
