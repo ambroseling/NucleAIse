@@ -26,6 +26,5 @@ for sequence in sequences:  # Adjust to process more or fewer sequences
                                              return_tensors="pt")
     # Extract the input IDs from the encoded sequence
     input_ids = encoded_sequence['input_ids']
-
     # Print the input IDs
     print(input_ids)

@@ -93,6 +93,7 @@ def load_sent2vec_model():
 def form_feature_matrix(go_df,model):
     feature_matrix = np.array([])
     for i in tqdm(range(len(go_df.index))):
+        
         definition_embed = model.embed_sentence(go_df['def'][i])
         name_embed = model.embed_sentence(go_df['def'][i])
         h_i = np.array(definition_embed)
