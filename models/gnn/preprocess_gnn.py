@@ -97,17 +97,21 @@ class GNNDataset(InMemoryDataset):
             for pdb in missing_pdbs:
                 missing_pdb_file.write(pdb + "\n")
 
-
-dataset = GNNDataset(os.getcwd() + "/models/gnn")
-dataset.print_summary()
-partition = int(len(dataset)*0.8)
-train_set = dataset[0:partition]
-test_set = dataset[partition:]
-train_set.print_summary()
-test_set.print_summary()
-train_loader = DataLoader(dataset=train_set, batch_size=64, shuffle=True)
-test_loader = DataLoader(dataset=test_set, batch_size=64, shuffle=True)
-
+def load_gnn_data():
+    dataset = GNNDataset(os.getcwd() + "/models/gnn")
+    dataset.print_summary()
+    train_partition = int(len(dataset)*0.6)
+    val_partition = int(len(dataset)*0.8)
+    train_set = dataset[0:train_partition]
+    val_set = dataset[train_partition:val_partition]
+    test_set = dataset[val_partition:]
+    train_set.print_summary()
+    test_set.print_summary()
+    train_loader = DataLoader(dataset=train_set, batch_size=64, shuffle=True)
+    val_loader = DataLoader(dataset=val_set, batch_size=64, shuffle=True)
+    test_loader = DataLoader(dataset=test_set, batch_size=64, shuffle=True)
+    return train_loader,val_loader,test_loader
+    
 # TODO: Start training loop
 for batch in train_loader:
     pass
