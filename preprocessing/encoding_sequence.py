@@ -7,9 +7,12 @@ data_path = "sample_data.csv"
 df = pd.read_csv(data_path)
 # df['sequence'] = df['OS'] + "," + df['sequence']
 df['sequence'] = df['sequence'].apply(lambda x: ' '.join(list(x))) #add space in between each character in sequence so that BERT model can recognize them and generate different encodings
-df['sequence'] = df['OS'] + df['sequence']
+# df['OS'] = df['OS'].str.replace(' ', ',')
+# print(df['OS'])
+df['sequence'] = df['OS'] + ","+ df['sequence']
+# print(df['sequence'][0])
 sequences = df["sequence"].tolist()
-# print(sequences[0])
+print(sequences[1])
 unique_sequences = list(set(sequences))
 
 # Load tokenizer and model
@@ -28,4 +31,4 @@ for sequence in sequences:  # Adjust to process more or fewer sequences
     input_ids = encoded_sequence['input_ids']
 
     # Print the input IDs
-    print(input_ids)
+    # print(input_ids)
