@@ -2,6 +2,7 @@ import torch
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import InMemoryDataset, Data
 from torch_geometric.utils import to_edge_index
+from transformers import BertModel, BertTokenizer
 from Bio.PDB import *
 import numpy as np
 import os
@@ -10,6 +11,7 @@ from csv import DictReader
 import shutil
 import dotenv
 import requests
+import re
 from tqdm import tqdm
 dotenv.load_dotenv()
 
@@ -17,6 +19,10 @@ class GNNDataset(InMemoryDataset):
     def __init__(self, root, train=True, transform=None, pre_transform=None, pre_filter=None, limit=None):
         self.limit = limit
         self.train = train
+        # BERT Model for generating node features
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.bert_tokenizer = BertTokenizer.from_pretrained(os.environ.get('bert_model_name'))
+        self.bert_model = BertModel.from_pretrained(os.environ.get('bert_model_name')).to(self.device)
         super().__init__(root, transform, pre_transform, pre_filter)
         self.data, self.slices = torch.load(self.processed_paths[0])
 
@@ -35,9 +41,31 @@ class GNNDataset(InMemoryDataset):
                 
         dataset_csv = os.environ.get('dataset_csv')
         if missing_raw_files[0] == dataset_csv:
-            shutil.copyfile(os.path.join('preprocessing', dataset_csv), os.path.join(self.raw_dir, dataset_csv))
-            os.remove(os.path.join(self.processed_dir, os.environ.get('output_pt')))
+            shutil.copyfile(os.path.join('preprocessing/data', dataset_csv), os.path.join(self.raw_dir, dataset_csv))
+            os.remove(os.path.join(self.processed_dir, os.environ.get('dataset_file')))
 
+    def get_bert_embedding(self, sequence):
+        sequence = re.sub(r"[UZOB]", "X", sequence) # there could be some special amino acids in the sequence, this is to eliminate that
+        sequence_w_spaces = ' '.join(list(sequence))
+        N = len(sequence)
+        encoded_input = self.bert_tokenizer(
+            sequence_w_spaces,
+            truncation=True,
+            max_length=N+2,
+            padding='max_length',
+            return_tensors='pt').to(self.device)
+        # print("Sequence: " + str(N))
+        # print(sequence)
+        # print()
+        # print("Encoded Input: " + str(encoded_input["input_ids"].shape))
+        # print(encoded_input)
+        # print()
+
+        with torch.no_grad():
+            output = self.bert_model(**encoded_input)["last_hidden_state"]
+        CLS = output[0,0,:]
+        node_embeddings = output[0,1:N+1,:]
+        return CLS, node_embeddings
 
     def process(self):
         with open(os.path.join(self.raw_dir, os.environ.get("dataset_csv"))) as dataset_csv:
@@ -75,13 +103,7 @@ class GNNDataset(InMemoryDataset):
                             contact_map[i][j] = 0
                         contact_map[j][i] = contact_map[i][j]
                         
-                node_embeddings = []
-                embedding_size = 1
-                for i in range(residue_count):
-                    # TODO: Apply ProtBERT Embeddings
-                    node_embeddings.append([i])
-                    pass
-                node_features = torch.tensor(node_embeddings).view(residue_count, embedding_size)
+                CLS, node_features = self.get_bert_embedding(protein['sequence'])
                 edge_index, edge_attr = to_edge_index(torch.tensor(contact_map).to_sparse())
                 data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr, y=goa, )
                 data.validate(raise_on_error=True)
@@ -112,8 +134,8 @@ def load_gnn_data():
     test_loader = DataLoader(dataset=test_set, batch_size=64, shuffle=True)
     return train_loader,val_loader,test_loader
     
-# TODO: Start training loop
-for batch in train_loader:
-    pass
 
+
+if __name__ == '__main__':
+    train_loader, val_loader, test_loader = load_gnn_data()
 
