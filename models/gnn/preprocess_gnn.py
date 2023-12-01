@@ -26,6 +26,7 @@ class GNNDataset(InMemoryDataset):
         self.bert_tokenizer = BertTokenizer.from_pretrained(os.environ.get('bert_model_name'))
         self.bert_model = BertModel.from_pretrained(os.environ.get('bert_model_name')).to(self.device)
         super().__init__(root, transform, pre_transform, pre_filter)
+        print(self.processed_paths[0])
         self.data, self.slices = torch.load(self.processed_paths[0])
 
     @property
@@ -56,12 +57,6 @@ class GNNDataset(InMemoryDataset):
             max_length=N+2,
             padding='max_length',
             return_tensors='pt').to(self.device)
-        # print("Sequence: " + str(N))
-        # print(sequence)
-        # print()
-        # print("Encoded Input: " + str(encoded_input["input_ids"].shape))
-        # print(encoded_input)
-        # print()
 
         with torch.no_grad():
             output = self.bert_model(**encoded_input)["last_hidden_state"]
@@ -195,7 +190,6 @@ def load_gnn_data():
     val_loader = DataLoader(dataset=val_set, batch_size=64, shuffle=True)
     test_loader = DataLoader(dataset=test_set, batch_size=64, shuffle=True)
     return train_loader,val_loader,test_loader
-    
 
 
 if __name__ == '__main__':
