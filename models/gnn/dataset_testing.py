@@ -14,6 +14,7 @@ min_size = 10000000000
 max_size = 0
 count = 0
 goa_list = []
+goa_freq = {}
 for protein in tqdm(dataset):
     size = len(protein["sequence"])
     goa = protein["goa"]
@@ -30,12 +31,19 @@ for protein in tqdm(dataset):
     for g in goa:
         print(int(g[4:11]))
         goa_list.append(int(g[4:11]))
+        if g not in goa_freq:
+            goa_freq[g] = 0
+
+        goa_freq[g] += 1
         # goa_list.append(g)
         # if g not in goa_dist:
         #     goa_dist[g] = []
         
         # goa_dist[g].append(1)
 
+    
+
+    
     if size > max_size:
         max_size = size
 
@@ -50,6 +58,7 @@ print("Max Size: " + str(max_size))
 print("Proportion Below 1000: " + str(count/len(dataset)))
 
 
+
 if __name__ == '__main__':
     # print(len(os_dist))
     # i = 0
@@ -59,7 +68,12 @@ if __name__ == '__main__':
     # # print(sorted_colors)
     # # colors = list(sorted_colors.keys())
     # colors = ['pink', 'purple', 'mediumpurple', 'blue', 'lightsteelblue', 'springgreen', 'darkgreen', 'yellow', 'orange', 'red']
-
+    min_freq = 300000
+    for goa in goa_freq:
+        if goa_freq[goa] < min_freq:
+            min_freq = goa_freq[goa]
+    print("Min Freq: " + str(min_freq))
+    
     print(len(set(goa_list)))
     plt.hist(goa_list, bins=len(set(goa_list)), color='blue', ec='black')
     plt.show()

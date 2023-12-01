@@ -20,6 +20,7 @@ class GNNDataset(InMemoryDataset):
         self.limit = limit
         self.train = train
         self.goa_percentage = goa_percentage
+        self.goa_list = []
         # BERT Model for generating node features
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.bert_tokenizer = BertTokenizer.from_pretrained(os.environ.get('bert_model_name'))
@@ -73,18 +74,24 @@ class GNNDataset(InMemoryDataset):
             csv_dict = list(DictReader(dataset_csv))
 
         # Determine GO Annotation Mapping
+        goa_freq = {}
         goa_set = set()
         for protein in csv_dict:
             goa = protein["goa"].strip('][').split(', ')
             for g in goa:
+                if g not in goa_freq:
+                    goa_freq[g] = 0
+                goa_freq[g] += 1
                 goa_set.add(int(g[4:len(g)-1]))
 
-        goa_list = list(goa_set)
-        goa_list.sort()
+        for goa in list(goa_set):
+            if goa_freq[goa] >= 3:
+                self.goa_list.append(goa)
+        self.goa_list.sort()
         # print(goa_list)
         goa_map = {}
-        for i, goa in enumerate(goa_list):
-            if i > self.goa_percentage*len(goa_list):
+        for i, goa in enumerate(self.goa_list):
+            if i > self.goa_percentage*len(self.goa_list):
                 break
             goa_map[goa] = i
         print(goa_map)
@@ -102,7 +109,8 @@ class GNNDataset(InMemoryDataset):
             goa = protein["goa"].strip('][').split(', ')
             output_labels = []
             for g in goa:
-                output_labels.append(goa_map[int(g[4:len(g)-1])])
+                if int(g[4:len(g)-1]) in goa_map:
+                    output_labels.append(goa_map[int(g[4:len(g)-1])])
             output_labels.sort()
             alphafold_url = alphafold_url_template.format(accession_id=accession_id)
             alphafold_response = requests.get(alphafold_url)
@@ -147,9 +155,40 @@ def load_gnn_data():
     dataset.print_summary()
     train_partition = int(len(dataset)*0.6)
     val_partition = int(len(dataset)*0.8)
-    train_set = dataset[0:train_partition]
-    val_set = dataset[train_partition:val_partition]
-    test_set = dataset[val_partition:]
+    train_valid = False
+    val_valid = False
+    test_valid = False
+    while not train_valid or not val_valid or not test_valid:
+        dataset.shuffle()
+        train_set = dataset[0:train_partition]
+        val_set = dataset[train_partition:val_partition]
+        test_set = dataset[val_partition:]
+
+        goa_list = dataset.goa_list
+        for data in train_set:
+            for goa in data.y:
+                if goa in goa_list:
+                    goa_list.remove(goa)
+        train_valid = len(goa_list) == 0
+        if not train_valid:
+            continue
+
+        goa_list = dataset.goa_list
+        for data in val_set:
+            for goa in data.y:
+                if goa in goa_list:
+                    goa_list.remove(goa)
+        val_valid = len(goa_list) == 0
+        if not val_valid:
+            continue
+
+        goa_list = dataset.goa_list
+        for data in test_set:
+            for goa in data.y:
+                if goa in goa_list:
+                    goa_list.remove(goa)
+        test_valid = len(goa_list) == 0
+
     train_set.print_summary()
     test_set.print_summary()
     train_loader = DataLoader(dataset=train_set, batch_size=64, shuffle=True)
