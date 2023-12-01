@@ -3,7 +3,7 @@ from torch.nn import Module
 from torch_geometric.nn import GCNConv, GATConv, PairNorm, InstanceNorm
 from torch_geometric.nn import aggr
 import torch_geometric.nn.functional as F
-
+import torch.nn as nn
 
 class GNNBlock(Module):
     def __init__(
@@ -11,17 +11,15 @@ class GNNBlock(Module):
             in_channels, 
             out_channels, 
             type='GCN', 
-            activation='Relu', 
-            norm=None, 
-            residual=None,
-            dropout_p = None,
+            activation='relu', 
             params={},
             **kwargs
         ):
-        super.__init__()
+        super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.residual = None
+        self.dropout_p = params['dropout_p']
         if type == 'GAT':
             self.model = GATConv(
                 in_channels=in_channels, 
@@ -47,23 +45,23 @@ class GNNBlock(Module):
                 kwargs=kwargs
             )
 
-        if norm['type'] == 'PairNorm':
+        if params['norm']['norm_type'] == 'PairNorm':
             self.norm = PairNorm(
-                scale=norm['scale'] if 'scale' in norm.keys() else 1.0,
-                scale_individually=norm['scale_individually'] if 'scale_individually' in norm.keys() else False,
-                eps=norm['eps'] if 'eps' in norm.keys() else 1e-05
+                scale=params['norm_scale'] if 'scale' in params.keys() else 1.0,
+                scale_individually=params['norm_scale_individually'] if 'norm_scale_individually' in params.keys() else False,
+                eps=params['norm_eps'] if 'eps' in params.keys() else 1e-05
             )
-        elif norm['type'] == 'InstanceNorm':
+        elif params['norm']['norm_type'] == 'InstanceNorm':
             self.norm = InstanceNorm(
                 in_channels=self.in_channels,
-                eps=norm['eps'] if 'eps' in norm.keys() else 1e-05,
-                momentum=norm['momentum'] if 'momentum' in norm.keys() else 0.1,
-                affine=norm['affine'] if 'affine' in norm.keys() else True,
-                track_running_stats=norm['track_running_stats'] if 'track_running_stats' in norm.keys() else True
+                eps=params['norm_eps'] if 'norm_eps' in params.keys() else 1e-05,
+                momentum=params['norm_momentum'] if 'norm_momentum' in params.keys() else 0.1,
+                affine=params['norm_affine'] if 'norm_affine' in params.keys() else True,
+                track_running_stats=params['norm_track_running_stats'] if 'norm_track_running_stats' in params.keys() else True
             )
         else:
             self.norm = None
-        if residual['type'] == 'Drive':
+        if params['residual_type'] == 'Drive':
             # TODO: Implement Residual Connections with Drive
             pass
         else:
@@ -74,14 +72,14 @@ class GNNBlock(Module):
             pass
         elif activation == 'elu':
             self.activation = nn.ELU()
-        elif self.activation == 'silu':
+        elif activation == 'silu':
             self.activation = nn.SiLU()
-        elif self.activation == 'leakyrelu':
+        elif activation == 'leakyrelu':
             self.activationn = nn.LeakyReLU()
         else:
             self.activation = nn.ReLU()   
 
-        self.dropout = nn.Dropout(dropout_p)
+        self.dropout = nn.Dropout(self.dropout_p)
 
         w = torch.empty(1,1)
         nn.init.xavier_normal_(w)
@@ -152,21 +150,24 @@ class GNN():
         self.fc_units = params['fc_units']
         self.type = params['type']
         self.gnn_act = params['gnn_act']
-        self.fc_act = params['fc_act']
+        if params['fc_act'] == 'relu':
+            self.fc_act = nn.ReLU()
+        elif params['fc_act']=='elu':
+            self.fc_act = nn.ELU()
         
 
-        self.gnn_blocks = [GNNBlock(self.channels[i], self.channels[i+1], type=self.type , activation=self.gnn_act, norm=self.norm,params=self.params,**kwargs) for i in range(num_blocks)]
+        self.gnn_blocks = [GNNBlock(self.channels[i], self.channels[i+1],params=params,**kwargs) for i in range(self.num_blocks)]
         #self.attn_blocks = []
         self.fc = [nn.Linear(self.fc_units[i],self.fc_units[i+1]) for i in range(len(self.fc_units)-1)]
 
     #     self.go_gnn = DAGNN(num_vocab=0,max_seq_len=0,w_edge_attr=False,emb_dim=700,hidden_dim=700,out_dim=700,num_rels=1,num_layers=2,
     # bidirectional=True,mapper_bias=True,agg_x=False,agg = "attn_h",out_wx=True,out_pool_all=False,out_pool ="max",encoder=None,dropout=0.0,word_vectors=None,emb_dims=[],activation=None,num_class=0,recurr=1)
        
-        if aggr_type == "mean":
+        if params['aggr_type'] == "mean":
             self.aggr = aggr.MeanAggregation()
-        elif aggr_type == "max":
+        elif params['aggr_type'] == "max":
             self.aggr = aggr.MedianAggregation()
-        elif aggr_type == "sum":
+        elif params['aggr_type'] == "sum":
             self.aggr = aggr.SumAggregation()
 
     def forward(self,data):

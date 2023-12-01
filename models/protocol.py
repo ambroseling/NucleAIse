@@ -62,7 +62,6 @@ class Protocol():
         elif loss_type == 'mcloss':
             pass
         
-        self.optimizer = torch.optim.Adam(self.model.parameters(),lr=self.learning_rate)
 
 
     def load_data(self):
@@ -76,6 +75,8 @@ class Protocol():
         model.train()
         model.to(self.device)
         train_start = time.time()
+        self.optimizer = torch.optim.Adam(model.parameters(),lr=self.learning_rate)
+
         for epoch in range(self.epoch):
             epoch_start = time.time()
             self.avg_train_loss = 0.0
