@@ -16,9 +16,10 @@ from tqdm import tqdm
 dotenv.load_dotenv()
 
 class GNNDataset(InMemoryDataset):
-    def __init__(self, root, train=True, transform=None, pre_transform=None, pre_filter=None, limit=None):
+    def __init__(self, root, goa_percentage=1, train=True, transform=None, pre_transform=None, pre_filter=None, limit=None):
         self.limit = limit
         self.train = train
+        self.goa_percentage = goa_percentage
         # BERT Model for generating node features
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.bert_tokenizer = BertTokenizer.from_pretrained(os.environ.get('bert_model_name'))
@@ -70,7 +71,25 @@ class GNNDataset(InMemoryDataset):
     def process(self):
         with open(os.path.join(self.raw_dir, os.environ.get("dataset_csv"))) as dataset_csv:
             csv_dict = list(DictReader(dataset_csv))
-            
+
+        # Determine GO Annotation Mapping
+        goa_set = set()
+        for protein in csv_dict:
+            goa = protein["goa"].strip('][').split(', ')
+            for g in goa:
+                goa_set.add(int(g[4:len(g)-1]))
+
+        goa_list = list(goa_set)
+        goa_list.sort()
+        # print(goa_list)
+        goa_map = {}
+        for i, goa in enumerate(goa_list):
+            if i > self.goa_percentage*len(goa_list):
+                break
+            goa_map[goa] = i
+        print(goa_map)
+
+        # Forming Data Loop
         parser = PDBParser()
         dataset = []
         missing_pdbs = []
@@ -81,6 +100,10 @@ class GNNDataset(InMemoryDataset):
                 break
             accession_id = protein["ID"]
             goa = protein["goa"].strip('][').split(', ')
+            output_labels = []
+            for g in goa:
+                output_labels.append(goa_map[int(g[4:len(g)-1])])
+            output_labels.sort()
             alphafold_url = alphafold_url_template.format(accession_id=accession_id)
             alphafold_response = requests.get(alphafold_url)
 
@@ -105,7 +128,7 @@ class GNNDataset(InMemoryDataset):
                         
                 CLS, node_features = self.get_bert_embedding(protein['sequence'])
                 edge_index, edge_attr = to_edge_index(torch.tensor(contact_map).to_sparse())
-                data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr, y=goa, )
+                data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr, y=output_labels)
                 data.validate(raise_on_error=True)
                 dataset.append(data)
             else:
@@ -120,7 +143,7 @@ class GNNDataset(InMemoryDataset):
                 missing_pdb_file.write(pdb + "\n")
 
 def load_gnn_data():
-    dataset = GNNDataset(os.getcwd() + "/models/gnn")
+    dataset = GNNDataset(os.getcwd() + "/models/gnn", goa_percentage=0.8)
     dataset.print_summary()
     train_partition = int(len(dataset)*0.6)
     val_partition = int(len(dataset)*0.8)
