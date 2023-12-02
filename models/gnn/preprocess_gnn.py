@@ -21,6 +21,8 @@ class GNNDataset(InMemoryDataset):
         self.train = train
         self.goa_percentage = goa_percentage
         self.goa_list = []
+        with open(os.environ['residue_name_mapping_file'], "r") as f:
+            self.residue_name_mapping = json.load(f)
         # BERT Model for generating node features
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.bert_tokenizer = BertTokenizer.from_pretrained(os.environ.get('bert_model_name'))
@@ -62,6 +64,7 @@ class GNNDataset(InMemoryDataset):
             output = self.bert_model(**encoded_input)["last_hidden_state"]
         CLS = output[0,0,:]
         node_embeddings = output[0,1:N+1,:]
+        assert node_embeddings.shape == (N, 1024)
         return CLS, node_embeddings
 
     def process(self):
@@ -74,16 +77,16 @@ class GNNDataset(InMemoryDataset):
         for protein in csv_dict:
             goa = protein["goa"].strip('][').split(', ')
             for g in goa:
-                if g not in goa_freq:
-                    goa_freq[g] = 0
-                goa_freq[g] += 1
+                if int(g[4:len(g)-1]) not in goa_freq:
+                    goa_freq[int(g[4:len(g)-1])] = 0
+                goa_freq[int(g[4:len(g)-1])] += 1
                 goa_set.add(int(g[4:len(g)-1]))
 
         for goa in list(goa_set):
             if goa_freq[goa] >= 3:
                 self.goa_list.append(goa)
         self.goa_list.sort()
-        # print(goa_list)
+        print(self.goa_list)
         goa_map = {}
         for i, goa in enumerate(self.goa_list):
             if i > self.goa_percentage*len(self.goa_list):
@@ -95,6 +98,7 @@ class GNNDataset(InMemoryDataset):
         parser = PDBParser()
         dataset = []
         missing_pdbs = []
+        alphafold_sequence_mismatches = []
         alphafold_url_template = os.environ.get('alphafold_url_template')
         count = 0
         for protein in tqdm(csv_dict):
@@ -118,7 +122,7 @@ class GNNDataset(InMemoryDataset):
 
                 structure = parser.get_structure(accession_id, pdb_file_name)
                 ca_coord = [atom.get_coord() for residue in structure.get_residues() for atom in residue.get_atoms() if atom.get_name() == 'CA']
-                residue_count = len(ca_coord)   
+                residue_count = len(ca_coord)                     
                 contact_map = np.zeros((residue_count, residue_count))
                 for i in range(residue_count):
                     for j in range(i, residue_count):
@@ -128,8 +132,18 @@ class GNNDataset(InMemoryDataset):
                         else:
                             contact_map[i][j] = 0
                         contact_map[j][i] = contact_map[i][j]
+
+                sequence = protein['sequence']
+                if residue_count != len(protein['sequence']):
+                    sequence = ""
+                    alphafold_sequence_mismatches.append(accession_id)
+                    for residue in structure.get_residues():
+                        if residue.get_resname() in self.residue_name_mapping:
+                            sequence += self.residue_name_mapping[residue.get_resname()]
+                        else:
+                            sequence += "X"
                         
-                CLS, node_features = self.get_bert_embedding(protein['sequence'])
+                CLS, node_features = self.get_bert_embedding(sequence)
                 edge_index, edge_attr = to_edge_index(torch.tensor(contact_map).to_sparse())
                 data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr, y=output_labels)
                 data.validate(raise_on_error=True)
@@ -141,9 +155,13 @@ class GNNDataset(InMemoryDataset):
 
         torch.save(self.collate(dataset), self.processed_paths[0])
         
-        with open(os.path.join(self.raw_dir, "missing_pdbs.txt"), "w") as missing_pdb_file:
+        with open(os.path.join(self.processed_dir, "missing_pdbs.txt"), "w") as missing_pdb_file:
             for pdb in missing_pdbs:
                 missing_pdb_file.write(pdb + "\n")
+        
+        with open(os.path.join(self.processed_dir, "alphafold_sequence_mismatches.txt"), "w") as alphafold_mismatch_file:
+            for accessed_id in alphafold_sequence_mismatches:
+                alphafold_mismatch_file.write(accession_id + "\n")
 
 def load_gnn_data():
     dataset = GNNDataset(os.getcwd() + "/models/gnn", goa_percentage=0.8)
