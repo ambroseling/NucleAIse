@@ -29,7 +29,8 @@ class GNNDataset(InMemoryDataset):
         self.bert_model = BertModel.from_pretrained(os.environ.get('bert_model_name')).to(self.device)
         super().__init__(root, transform, pre_transform, pre_filter)
         print(self.processed_paths[0])
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        with open(self.processed_paths[0], "r") as f:
+            self.data = json.load(f)
 
     @property
     def raw_file_names(self):
@@ -101,7 +102,7 @@ class GNNDataset(InMemoryDataset):
         alphafold_sequence_mismatches = []
         alphafold_url_template = os.environ.get('alphafold_url_template')
         count = 0
-        for protein in tqdm(csv_dict):
+        for protein in csv_dict:
             if self.limit is not None and count > self.limit:
                 break
             accession_id = protein["ID"]
@@ -148,12 +149,19 @@ class GNNDataset(InMemoryDataset):
                 data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr, y=output_labels)
                 data.validate(raise_on_error=True)
                 dataset.append(data)
+
+                if len(dataset) %= 2000:
+                    percent_complete = len(dataset)/200
+                    print(str(percent_complete) + " completed")                 
+
             else:
                 missing_pdbs.append(accession_id)
             
             count += 1
 
+        print("Saving Dataset Now")
         torch.save(self.collate(dataset), self.processed_paths[0])
+        print("Finished Saving Dataset!!!")
         
         with open(os.path.join(self.processed_dir, "missing_pdbs.txt"), "w") as missing_pdb_file:
             for pdb in missing_pdbs:
@@ -166,43 +174,40 @@ class GNNDataset(InMemoryDataset):
 def load_gnn_data():
     dataset = GNNDataset(os.getcwd() + "/models/gnn", goa_percentage=0.8)
     dataset.print_summary()
-    train_partition = int(len(dataset)*0.6)
-    val_partition = int(len(dataset)*0.8)
-    train_valid = False
-    val_valid = False
-    test_valid = False
-    while not train_valid or not val_valid or not test_valid:
-        dataset.shuffle()
-        train_set = dataset[0:train_partition]
-        val_set = dataset[train_partition:val_partition]
-        test_set = dataset[val_partition:]
 
-        goa_list = dataset.goa_list
-        for data in train_set:
-            for goa in data.y:
-                if goa in goa_list:
-                    goa_list.remove(goa)
-        train_valid = len(goa_list) == 0
-        if not train_valid:
-            continue
+    train_set = []
+    val_set = []
+    test_set = []
+    dataset_list = list(dataset)
+    for goa in dataset.goa_list:
+        for protein in dataset_list:
+            if goa in set(protein.y):
+                train_set.append(protein)
+                dataset_list.remove(protein)
+                break
 
-        goa_list = dataset.goa_list
-        for data in val_set:
-            for goa in data.y:
-                if goa in goa_list:
-                    goa_list.remove(goa)
-        val_valid = len(goa_list) == 0
-        if not val_valid:
-            continue
+        for protein in dataset_list:
+            if goa in set(protein.y):
+                val_set.append(protein)
+                dataset_list.remove(protein)
+                break
 
-        goa_list = dataset.goa_list
-        for data in test_set:
-            for goa in data.y:
-                if goa in goa_list:
-                    goa_list.remove(goa)
-        test_valid = len(goa_list) == 0
+        for protein in dataset_list:
+            if goa in set(protein.y):
+                val_set.append(protein)
+                dataset_list.remove(protein)
+                break
+        
+    train_partition = int(len(dataset_list)*0.6)
+    val_partition = int(len(dataset_list)*0.8)
+
+    train_set += dataset_list[0:train_partition]
+    val_set += dataset_list[train_partition: val_partition]
+    test_set += dataset_list[val_partition:]
+
 
     train_set.print_summary()
+    val_set.print_summary()
     test_set.print_summary()
     train_loader = DataLoader(dataset=train_set, batch_size=64, shuffle=True)
     val_loader = DataLoader(dataset=val_set, batch_size=64, shuffle=True)
