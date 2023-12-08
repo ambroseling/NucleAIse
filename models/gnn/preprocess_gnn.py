@@ -148,12 +148,12 @@ class GNNDataset(InMemoryDataset):
         alphafold_sequence_mismatches = []
         alphafold_url_template = os.environ.get('alphafold_url_template')
         count = 0
-        batch_num = 1
+        batch_num = 95
         print("Starting Batch " + str(batch_num))
-        for k, protein in enumerate(csv_dict):
+        for k, protein in enumerate(csv_dict[9691:]):
             if self.limit is not None and count > self.limit:
                 break
-            print("Protein " + str(k+1))
+            print("Protein " + str(k+1+9691))
             accession_id = protein["ID"]
             goa = protein["goa"].strip('][').split(', ')
             output_labels = []
@@ -223,11 +223,11 @@ class GNNDataset(InMemoryDataset):
             torch.save(self.collate(dataset), path)
             print("Batch " + str(batch_num) + " Completed")
 
-        with open(os.path.join(self.processed_dir, "missing_pdbs.txt"), "w") as missing_pdb_file:
+        with open(os.path.join(self.processed_dir, "missing_pdbs.txt"), "a") as missing_pdb_file:
             for pdb in missing_pdbs:
                 missing_pdb_file.write(pdb + "\n")
         
-        with open(os.path.join(self.processed_dir, "alphafold_sequence_mismatches.txt"), "w") as alphafold_mismatch_file:
+        with open(os.path.join(self.processed_dir, "alphafold_sequence_mismatches.txt"), "a") as alphafold_mismatch_file:
             for accessed_id in alphafold_sequence_mismatches:
                 alphafold_mismatch_file.write(accession_id + "\n")
 
