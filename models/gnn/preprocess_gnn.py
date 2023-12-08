@@ -148,12 +148,12 @@ class GNNDataset(InMemoryDataset):
         alphafold_sequence_mismatches = []
         alphafold_url_template = os.environ.get('alphafold_url_template')
         count = 0
-        batch_num = 95
+        batch_num = 101
         print("Starting Batch " + str(batch_num))
-        for k, protein in enumerate(csv_dict[9691:]):
+        for k, protein in enumerate(csv_dict[10317:]):
             if self.limit is not None and count > self.limit:
                 break
-            print("Protein " + str(k+1+9691))
+            print("Protein " + str(k+1+10317))
             accession_id = protein["ID"]
             goa = protein["goa"].strip('][').split(', ')
             output_labels = []
