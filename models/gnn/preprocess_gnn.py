@@ -1,6 +1,6 @@
 import torch
 from torch_geometric.loader import DataLoader
-from torch_geometric.data import InMemoryDataset, Data
+from torch_geometric.data import InMemoryDataset, Data, Database
 from torch_geometric.utils import to_edge_index
 from transformers import BertModel, BertTokenizer
 from Bio.PDB import *
@@ -13,10 +13,18 @@ import dotenv
 import requests
 import re
 from tqdm import tqdm
+import tracemalloc
 dotenv.load_dotenv()
 
+class Database(Database):
+    def insert(self,index,value):
+        pass
+    def get(self):
+        pass
+
+
 class GNNDataset(InMemoryDataset):
-    def __init__(self, root, batch_size, goa_percentage=1, train=True, transform=None, pre_transform=None, pre_filter=None, limit=None):
+    def __init__(self, root, batch_size, goa_percentage=1, train=True, transform=None, pre_transform=None, pre_filter=None, limit=None,database=None):
         self.limit = limit
         self.train = train
         self.batch_size = batch_size
@@ -30,15 +38,22 @@ class GNNDataset(InMemoryDataset):
         self.bert_model = BertModel.from_pretrained(os.environ.get('bert_model_name')).to(self.device)
         super().__init__(root, transform, pre_transform, pre_filter)
         print("Loading Dataset Tensors...")
+
         if os.path.exists(self.processed_paths[0]):
+
             data_obj = []
             slices_list = []
+            file_count = 0
             for file in os.listdir(self.processed_dir):
                 if file[0:13] == 'dataset_batch':
                     data, slices = torch.load(os.path.join(self.processed_dir, file))
-                    data_obj.append(data)
+                    database[file_count] = Data(x = data.x,edge_index = data.edge_index,edge_attr=data.edge_attr,y = data.y)
                     slices_list.append(slices)
-            self.data, self.slices = self.collate(data_obj)
+                    file_count+=1
+            # snapshot = tracemalloc.take_snapshot()
+            # display_top(snapshot)
+            self.data,self.slices = self.collate(database[0:file_count])
+            print("Loaded !")
             # Generating New Slices
             assert self.slices['x'].shape[0] == self.slices['edge_index'].shape[0] == self.slices['edge_attr'].shape[0] == self.slices['y'].shape[0]
             shape = self.slices['x'].shape[0]
@@ -46,6 +61,7 @@ class GNNDataset(InMemoryDataset):
             new_edge_index_slices = slices_list[0]['edge_index']
             new_edge_attr_slices = slices_list[0]['edge_attr']
             new_y_slices = slices_list[0]['y']
+
             for i in range(1, shape-1):
                 # Updating ith x slices
                 updated_x_slices = self.update_slices(slices_list[i]['x'], self.slices['x'][i])
@@ -62,7 +78,7 @@ class GNNDataset(InMemoryDataset):
                 # Update ith y slices
                 updated_y_slices = self.update_slices(slices_list[i]['y'], self.slices['y'][i])
                 new_y_slices = torch.cat((new_y_slices, updated_y_slices))
-                
+
             self.slices['x'] = new_x_slices
             self.slices['edge_index'] = new_edge_index_slices
             self.slices['edge_attr'] = new_edge_attr_slices
@@ -148,12 +164,12 @@ class GNNDataset(InMemoryDataset):
         alphafold_sequence_mismatches = []
         alphafold_url_template = os.environ.get('alphafold_url_template')
         count = 0
-        batch_num = 101
+        batch_num = 174
         print("Starting Batch " + str(batch_num))
-        for k, protein in enumerate(csv_dict[10317:]):
+        for k, protein in enumerate(csv_dict[17804:]):
             if self.limit is not None and count > self.limit:
                 break
-            print("Protein " + str(k+1+10317))
+            print("Protein " + str(k+1+17804))
             accession_id = protein["ID"]
             goa = protein["goa"].strip('][').split(', ')
             output_labels = []
@@ -237,7 +253,8 @@ class GNNDataset(InMemoryDataset):
         # torch.save(full_dataset, os.path.join(self.processed_dir, "full_dataset.pt"))
 
 def load_gnn_data(batch_size, goa_percentage=1, limit=None):
-    dataset = GNNDataset(os.getcwd() + "/models/gnn", batch_size=batch_size, goa_percentage=goa_percentage, limit=limit)
+    db = Database()
+    dataset = GNNDataset(os.getcwd() + "/models/gnn", batch_size=batch_size, goa_percentage=goa_percentage, limit=limit,database=db)
     dataset.print_summary()
 
     train_set = []

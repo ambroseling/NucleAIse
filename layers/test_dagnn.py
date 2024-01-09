@@ -86,16 +86,11 @@ edge_index = np.array([[1,3,0,2,2],[0,0,2,4,5]])
 
 bilayer_idx0,bilayer_idx1,bilayer = add_order_info(edge_index, 6)
 
-print("Bilayer idx0: ",bilayer_idx0)
-print("Bilayer idx1: ",bilayer_idx1)
-print("Bilayer / Bilayer index 0 and 1: ",bilayer)
-
-
 bi_layer_index = torch.stack([
             torch.stack([bilayer_idx0, bilayer], dim=0),
             torch.stack([bilayer_idx1, bilayer], dim=0)], dim=0)
 
-print("bilayer: ",bi_layer_index)
+print("bilayer: ",bi_layer_index.shape)
 num_layers_batch = max(bi_layer_index[0][0]).item() + 1
 
 edge_index = torch.tensor([[1,3,0,2,2],[0,0,2,4,5]])
@@ -113,6 +108,7 @@ le_idx = []
 for n in layer:
     ne_idx = edge_index[1] == n
     le_idx += [ne_idx.nonzero().squeeze(-1)]
+    
 le_idx = torch.cat(le_idx, dim=-1)
 print("leidx: ",le_idx)
 lp_edge_index = edge_index[:, le_idx]
@@ -127,7 +123,7 @@ num_nodes_batch = H.shape[0]
 h = [[torch.zeros(num_nodes_batch, 3)
                 for _ in range(2)] for _ in range(2)]
 
-print("hidden state: ",h)
+print("Hidden state: ",h)
 print(H)
 g = Data(x=H,edge_index = edge_index)
 
@@ -148,33 +144,25 @@ class AttnConv(MessagePassing):
 
     # h_attn_q is needed; h_attn, edge_attr are optional (we just use kwargs to be able to switch node aggregator above)
     def forward(self, h, edge_index, h_attn_q=None, edge_attr=None, h_attn=None, **kwargs):
-        print("H shape: ",h.shape)
-        print("H attn q shape: ",h_attn_q.shape)
-        print("H attn shape: ",h_attn.shape)
+
         edge_embedding = self.edge_encoder(edge_attr) if self.wea else None
-        print('called here!')
         return self.propagate(edge_index, h_attn_q=h_attn_q, h=h, edge_attr=edge_embedding, h_attn=h_attn)
 
     def message(self, h_attn_q_i, h_j, edge_attr, h_attn_j, index, ptr, size_i):
-        print("called!")
-        print("H attn q i: ",h_attn_q_i.shape)
-        print("H attn j: ",h_attn_j.shape)
-        print("H attn q i: ",h_attn_q_i)
-        print("H attn j: ",h_attn_j)
+
+        # so h_attn_q_i is the node features of the query nodes for each edge (num_of_edges, query_node_dim)
+        #    h_attn_j   is the node features of the target nodes for each edge (num_of_edges, target_node_dim)
         h_attn = h_attn_j if h_attn_j is not None else h_j
         h_attn = h_attn + edge_attr if self.wea else h_attn
-        # see comment in above self attention why this is done here and not in forward
+        # we concatenate query node features with target node features  so you get (num_of_edges, query_node_dim+target_node_dim)
+        print('input to attnlin: ',torch.cat([h_attn_q_i, h_attn], dim=-1).shape)
         a_j = self.attn_lin(torch.cat([h_attn_q_i, h_attn], dim=-1))
-        print("size: ",size_i)
-        print("ptr: ",ptr)
-        print("index: ",index)
-        print("a_j : ",a_j)
-        a_j = softmax(a_j, index, ptr, size_i)
-        print("a_j : ",a_j)
-        print("h_j : ",h_j)
-        t = h_j * a_j
-        print('t: ',t.shape)
-        print('t: ',t)
+        # you will get a score for each edge after passing thought attn_lin layer, to get (num_of_edges, 1)
+
+        a_j = softmax(a_j, index, ptr, size_i) #normalize
+
+        t = h_j * a_j # apply the attention score on the target nodes
+
         return t
 
     def update(self, aggr_out):
@@ -185,7 +173,6 @@ class AttnConv(MessagePassing):
 # bidirectional=True,mapper_bias=True,agg_x=True,agg = "attn_h",out_wx=True,out_pool_all=True,out_pool ="max",encoder=None,dropout=0.0,word_vectors=None,emb_dims=[],activation=None,num_class=0,recurr=1)
 
 attconv = AttnConv(attn_q_dim = 2, emb_dim= 2, attn_dim=2, num_relations=1, reverse=False)
-print(len(g.edge_index[0]))
-output = attconv(h,g.edge_index,g.x,None,g.x)
-input = 
+
+output = attconv(g.x,g.edge_index,g.x,None,g.x)
 print(output)

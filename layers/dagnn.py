@@ -166,7 +166,7 @@ class DAGNN(nn.Module):
 
                 if l_idx > 0:  # no predecessors at first layer
                     le_idx = []
-                    for n in layer: 
+                    for n in layer: #loop through all the nodes in the layer
                         ne_idx = G.edge_index[1-d] == n
                         le_idx += [ne_idx.nonzero().squeeze(-1)]
                     le_idx = torch.cat(le_idx, dim=-1)
