@@ -38,53 +38,56 @@ class GNNDataset(InMemoryDataset):
         self.bert_model = BertModel.from_pretrained(os.environ.get('bert_model_name')).to(self.device)
         super().__init__(root, transform, pre_transform, pre_filter)
         print("Loading Dataset Tensors...")
-
+        self.len = 10000
         if os.path.exists(self.processed_paths[0]):
 
             data_obj = []
-            slices_list = []
-            file_count = 0
-            for file in os.listdir(self.processed_dir):
-                if file[0:13] == 'dataset_batch':
-                    data, slices = torch.load(os.path.join(self.processed_dir, file))
-                    database[file_count] = Data(x = data.x,edge_index = data.edge_index,edge_attr=data.edge_attr,y = data.y)
-                    slices_list.append(slices)
-                    file_count+=1
-            # snapshot = tracemalloc.take_snapshot()
-            # display_top(snapshot)
-            self.data,self.slices = self.collate(database[0:file_count])
-            print("Loaded !")
-            # Generating New Slices
-            assert self.slices['x'].shape[0] == self.slices['edge_index'].shape[0] == self.slices['edge_attr'].shape[0] == self.slices['y'].shape[0]
-            shape = self.slices['x'].shape[0]
-            new_x_slices = slices_list[0]['x']
-            new_edge_index_slices = slices_list[0]['edge_index']
-            new_edge_attr_slices = slices_list[0]['edge_attr']
-            new_y_slices = slices_list[0]['y']
+            # slices_list = []
+            # file_list = os.listdir(self.processed_dir)
+            # file_list.sort()
+            # for file in file_list:
+            #     if file[0:13] == 'dataset_batch':
+            #         print("Looking at " + file)
+            #         data, slices = torch.load(os.path.join(self.processed_dir, file))
+            #         print(data['edge_index'])
+            #         print(data['edge_index'].shape)
+            #         print(slices['edge_index'])
+            #         self.len += slices['x'].shape[0]-1
 
-            for i in range(1, shape-1):
-                # Updating ith x slices
-                updated_x_slices = self.update_slices(slices_list[i]['x'], self.slices['x'][i])
-                new_x_slices = torch.cat((new_x_slices, updated_x_slices))
+            # print(self.len)
+            #         data_obj.append(data)
+            #         slices_list.append(slices)
+            # self.data, self.slices = self.collate(data_obj)
+            # # Generating New Slices
+            # assert self.slices['x'].shape[0] == self.slices['edge_index'].shape[0] == self.slices['edge_attr'].shape[0] == self.slices['y'].shape[0]
+            # shape = self.slices['x'].shape[0]
+            # new_x_slices = slices_list[0]['x']
+            # new_edge_index_slices = slices_list[0]['edge_index']
+            # new_edge_attr_slices = slices_list[0]['edge_attr']
+            # new_y_slices = slices_list[0]['y']
+            # for i in range(1, shape-1):
+            #     # Updating ith x slices
+            #     updated_x_slices = self.update_slices(slices_list[i]['x'], self.slices['x'][i])
+            #     new_x_slices = torch.cat((new_x_slices, updated_x_slices))
 
-                # Updating ith edge_index slices
-                updated_edge_index_slices = self.update_slices(slices_list[i]['edge_index'], self.slices['edge_index'][i])
-                new_edge_index_slices = torch.cat((new_edge_index_slices, updated_edge_index_slices))
+            #     # Updating ith edge_index slices
+            #     updated_edge_index_slices = self.update_slices(slices_list[i]['edge_index'], self.slices['edge_index'][i])
+            #     new_edge_index_slices = torch.cat((new_edge_index_slices, updated_edge_index_slices))
 
-                # Update ith edge_attr slices
-                updated_edge_attr_slices = self.update_slices(slices_list[i]['edge_attr'], self.slices['edge_attr'][i])
-                new_edge_attr_slices = torch.cat((new_edge_attr_slices, updated_edge_attr_slices))
+            #     # Update ith edge_attr slices
+            #     updated_edge_attr_slices = self.update_slices(slices_list[i]['edge_attr'], self.slices['edge_attr'][i])
+            #     new_edge_attr_slices = torch.cat((new_edge_attr_slices, updated_edge_attr_slices))
 
-                # Update ith y slices
-                updated_y_slices = self.update_slices(slices_list[i]['y'], self.slices['y'][i])
-                new_y_slices = torch.cat((new_y_slices, updated_y_slices))
-
-            self.slices['x'] = new_x_slices
-            self.slices['edge_index'] = new_edge_index_slices
-            self.slices['edge_attr'] = new_edge_attr_slices
-            self.slices['y'] = new_y_slices
-            print(self.data)
-            print(self.slices)
+            #     # Update ith y slices
+            #     updated_y_slices = self.update_slices(slices_list[i]['y'], self.slices['y'][i])
+            #     new_y_slices = torch.cat((new_y_slices, updated_y_slices))
+                
+            # self.slices['x'] = new_x_slices
+            # self.slices['edge_index'] = new_edge_index_slices
+            # self.slices['edge_attr'] = new_edge_attr_slices
+            # self.slices['y'] = new_y_slices
+            # print(self.data)
+            # print(self.slices)
         else:
             self.data = None
             self.slices = None
@@ -252,47 +255,75 @@ class GNNDataset(InMemoryDataset):
 
         # torch.save(full_dataset, os.path.join(self.processed_dir, "full_dataset.pt"))
 
+    def __getitem__(self, index):
+        print("Getting Index " + str(index)) 
+        dataset_batch_pt_size = int(os.environ.get('dataset_batch_pt_size'))
+        file_index = int(index/dataset_batch_pt_size) + 1
+        # print("File Index: " + str(file_index))
+        offset = index%(dataset_batch_pt_size)
+        # print("Offset: " + str(offset))
+        file = 'dataset_batch_' + str(file_index) + '.pt'
+        # print("File Name: " + str(file))
+        data, slices = torch.load(os.path.join(self.processed_dir, file))
+        data['x'] = data['x'][slices['x'][offset]:slices['x'][offset+1]]
+        data['edge_index'] = data['edge_index'][:, slices['edge_index'][offset]:slices['edge_index'][offset+1]]
+        data['edge_attr'] = data['edge_attr'][slices['edge_attr'][offset]:slices['edge_attr'][offset+1]]
+        data['y'] = data['y'][slices['y'][offset]:slices['y'][offset+1]]
+        # print(data)
+        return data
+
+    def __len__(self):
+        return self.len
+
+
 def load_gnn_data(batch_size, goa_percentage=1, limit=None):
-    db = Database()
-    dataset = GNNDataset(os.getcwd() + "/models/gnn", batch_size=batch_size, goa_percentage=goa_percentage, limit=limit,database=db)
-    dataset.print_summary()
+    dataset = GNNDataset(
+        os.getcwd() + "/models/gnn", 
+        batch_size=batch_size, 
+        goa_percentage=goa_percentage, 
+        limit=limit
+    )
 
-    train_set = []
-    val_set = []
-    test_set = []
-    dataset_list = list(dataset)
-    print("Creating Train, Val, and Test Sets")
-    for goa in dataset.goa_list:
-        for protein in dataset_list:
-            if goa in set(protein.y):
-                train_set.append(protein)
-                dataset_list.remove(protein)
-                break
+    loader = DataLoader(dataset, batch_size=8, shuffle=False)
+    for batch_idx, data in enumerate(loader):
+        print('batch: {}\tdata: {}'.format(batch_idx, data))
 
-        for protein in dataset_list:
-            if goa in set(protein.y):
-                val_set.append(protein)
-                dataset_list.remove(protein)
-                break
+    # train_set = []
+    # val_set = []
+    # test_set = []
+    # dataset_list = list(dataset)
+    # print("Creating Train, Val, and Test Sets")
+    # for goa in dataset.goa_list:
+    #     for protein in dataset_list:
+    #         if goa in set(protein.y):
+    #             train_set.append(protein)
+    #             dataset_list.remove(protein)
+    #             break
 
-        for protein in dataset_list:
-            if goa in set(protein.y):
-                val_set.append(protein)
-                dataset_list.remove(protein)
-                break
+    #     for protein in dataset_list:
+    #         if goa in set(protein.y):
+    #             val_set.append(protein)
+    #             dataset_list.remove(protein)
+    #             break
+
+    #     for protein in dataset_list:
+    #         if goa in set(protein.y):
+    #             val_set.append(protein)
+    #             dataset_list.remove(protein)
+    #             break
         
-    train_partition = int(len(dataset_list)*0.6)
-    val_partition = int(len(dataset_list)*0.8)
+    # train_partition = int(len(dataset_list)*0.6)
+    # val_partition = int(len(dataset_list)*0.8)
 
-    train_set += dataset_list[0:train_partition]
-    val_set += dataset_list[train_partition: val_partition]
-    test_set += dataset_list[val_partition:]
+    # train_set += dataset_list[0:train_partition]
+    # val_set += dataset_list[train_partition: val_partition]
+    # test_set += dataset_list[val_partition:]
 
-    print("Creating DataLoaders")
-    train_loader = DataLoader(dataset=train_set, batch_size=8, shuffle=True)
-    val_loader = DataLoader(dataset=val_set, batch_size=8, shuffle=True)
-    test_loader = DataLoader(dataset=test_set, batch_size=8, shuffle=True)
-    return train_loader,val_loader,test_loader
+    # print("Creating DataLoaders")
+    # train_loader = DataLoader(dataset=train_set, batch_size=8, shuffle=True)
+    # val_loader = DataLoader(dataset=val_set, batch_size=8, shuffle=True)
+    # test_loader = DataLoader(dataset=test_set, batch_size=8, shuffle=True)
+    # return train_loader,val_loader,test_loader
 
 
 if __name__ == '__main__':

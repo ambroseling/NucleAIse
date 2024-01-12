@@ -133,7 +133,7 @@ class Protocol():
         print("Final training acc: ",self.avg_train_acc)
         print("Final validation acc: ",self.avg_val_acc)
         print("Best validation acc: ",self.best_test_acc)
-        rpint("Best epoch: ",self.best_epoch)
+        print("Best epoch: ",self.best_epoch)
         print("Avg training inference time: ",self.avg_inference_time)
         print("Total training time: ",self.training_time)
         print(f"Model size: {self.find_model_size(self.model)} MB")
