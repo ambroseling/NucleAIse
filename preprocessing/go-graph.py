@@ -135,7 +135,7 @@ def add_order_info(graph):
 
 
 def main():
-    url = '/Users/ambroseling/Desktop/NucleAIse/NucleAIse/preprocessing/go-basic.obo'
+    url = '/preprocessing/go-basic.obo'
     graph = obonet.read_obo(url)
     node_features = set()
     for node in graph.nodes:
