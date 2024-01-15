@@ -1,8 +1,9 @@
 from Bio import SeqIO
 import pandas as pd 
 from read_fasta_sp import list_files_in_folder, extract
-import requests, json
+import random
 from read_fasta_50 import process_and_save_data_files
+import matplotlib as plt
                                                            
 # from SeqIO.website         
 def batch_iterator(fasta_iter, batch_size):
@@ -41,10 +42,9 @@ def combine(folder, filename):
     for path in file_paths: 
         total_data.append(pd.read_csv(path))
     
-    db = pd.concat(total_data).to_csv(filename)
+    pd.concat(total_data).to_csv(filename)
     
-
-def fasta_SPdata_only(handle): 
+def fasta_data_only(handle): 
     protein_dict = pd.DataFrame(columns = ['ID', 'OX','OS','Genename','Sequence', "GOA"])
     protein_iter = SeqIO.FastaIO.FastaIterator(handle)
     id = []
@@ -52,49 +52,71 @@ def fasta_SPdata_only(handle):
     OS_val = []
     seq = []
     GN_val = []
-    goa = []
 
     for p in protein_iter: 
         temp_id = p.id.split('|')
-        accession_id = temp_id[1] if (len(temp_id) >2) else None
-
-        uniprot_url = "https://rest.uniprot.org/uniprotkb/{accession_id}?format=json"
-        url = uniprot_url.format(accession_id = accession_id) 
-        try: 
-            uniprot_response = requests.get(url, timeout = 20).json()
-            if (uniprot_response.get('uniProtKBCrossReferences') != None) and len(p.seq) <= 10000: 
-                for ref in uniprot_response['uniProtKBCrossReferences']:
-                    if ref['database'] == 'GO':
-                        goa.append(ref['id'])
         
-                id.append(temp_id)
-                seq.append(p.seq)
-                os_value, ox_value, Gname = extract(p.description)
-                OX_val.append(ox_value)
-                OS_val.append(os_value)
-                GN_val.append(Gname)
-
-        except requests.exceptions.Timeout: 
-            print('This request timed out')
-        except (requests.exceptions.ConnectionError, json.decoder.JSONDecodeError):
-            print("COnnection error")
-      
+        id.append(temp_id)
+        seq.append(p.seq)
+        os_value, ox_value, Gname = extract(p.description)
+        OX_val.append(ox_value)
+        OS_val.append(os_value)
+        GN_val.append(Gname)
 
     protein_dict['ID'] = id
     protein_dict['Sequence'] = seq
     protein_dict['OX'] = OX_val
     protein_dict['OS'] = OS_val
     protein_dict['Genename'] = GN_val 
-    protein_dict['GOA'] = goa
 
     # protein_dict.to_csv(filename)
- 
+
+def GOA_split(filename, num_prot_per_goa=100,num_GOA=100):
+    # Load the CSV file into a DataFrame
+    csv_file_path = filename
+    data = pd.read_csv(csv_file_path)
+
+    # Split 'goa' column into a list of items, then explode the dataframe
+    goa_data = data['goa'].str.strip("[]").str.replace("'", "").str.split(', ')
+    goa_exploded = goa_data.explode()
+
+    # Counting the occurrences of each goa item
+    goa_counts = goa_exploded.value_counts()
+
+    # Select the first 100 most frequent GOA terms
+    top_goa = goa_counts.head(num_GOA)
+
+    # Finding proteins associated with each of the top 100 GOA terms
+    protein_associations = {}
+    all_proteins_set = set()
+
+    for goa_term in top_goa.index:
+        num_prot_in_goa = num_prot_per_goa 
+        proteins = data[data['goa'].str.contains(f"\\b{goa_term}\\b", regex=True)]['ID']
+        unique_proteins = proteins.tolist()
+        protein_associations[goa_term] = unique_proteins
+
+        if len(unique_proteins) < num_prot_per_goa: 
+            num_prot_in_goa = len(unique_proteins)
+
+        random.shuffle(unique_proteins)
+        all_proteins_set.update(unique_proteins[:num_prot_in_goa])
+
+    # Convert the set of all proteins to a list to get a list of unique proteins
+    all_unique_proteins = list(all_proteins_set)
+    filtered_df = pd.DataFrame()
     
+    filtered_df = data[data['ID'].isin(all_unique_proteins)]
+    filtered_df.to_csv('filtered.csv')
+    return filtered_df                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+
 if __name__ == "__main__":
+    GOA_split("sp_db.csv", num_GOA=10)
+
     # fasta_SPdata_only('preprocessing\\data\\batched_sp_db\\group_1.fastq')
-    savefiles = list_files_in_folder("preprocessing\\data\\batched_sp_db")
-    process_and_save_data_files(savefiles, fasta_SPdata_only, 'SP_data_fasta')
-    # combine("processed_sp", 'sp_db.csv')
+    # savefiles = list_files_in_folder("processed_50\\group7")
+    # process_and_save_data_files(savefiles, fasta_data_only, 'SP_data_fasta')
+    # combine("processed_50\\uniref50", 'uniref50_db.csv')
     '''     filename = 'uniref50.fasta'
     record_iter = SeqIO.parse(open(filename), "fasta")
     batch_size = 2000000
