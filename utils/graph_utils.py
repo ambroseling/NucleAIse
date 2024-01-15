@@ -86,6 +86,7 @@ def retreieve_cmap(protein):
 
 
 
+#RUN THIS TO GENERATE PT FILE
 # if __name__ == "__main__":
 #     dataset_path = '/Users/ambroseling/Desktop/NucleAIse/NucleAIse/models/gnn/raw/sp_db.csv'
 #     with open(dataset_path) as dataset_csv:
@@ -132,7 +133,7 @@ def retreieve_cmap(protein):
         
 
 
-
+#RUN THIS TO SEE THE EIGVENVALUE DIST
 if __name__ == "__main__":
     dist = torch.load("/Users/ambroseling/Desktop/NucleAIse/NucleAIse/eigenvalue_dist.pt")
     plt.imshow(dist.detach().numpy(), cmap='hot', interpolation='nearest')
