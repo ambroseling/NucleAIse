@@ -1,10 +1,10 @@
 import torch
 from torch.nn import Module
 from torch_geometric.nn import GCNConv, GATConv, PairNorm, InstanceNorm
-from dagnn import DAGNN
+from .dagnn import DAGNN
 
 from torch_geometric.nn import aggr
-from torch_geometric.data import Data
+from torch_geometric.data import Data,Batch
 import torch_geometric.nn.functional as F
 import torch.nn as nn
 from egnn_pytorch import EGNN
@@ -44,7 +44,8 @@ class GNNBlock(Module):
         elif type == "GVP":
             pass
         elif type == "PointNetConv":
-            self.model = PointNetConv()
+            #self.model = PointNetConv()
+            pass
         elif type == "DAGNN":
             self.model = DAGNN(num_vocab=0,max_seq_len=0,w_edge_attr=False,emb_dim=700,hidden_dim=700,out_dim=700,num_rels=1,num_layers=2,
                             bidirectional=True,mapper_bias=True,agg_x=True,agg = "attn_h",out_wx=True,out_pool_all=True,out_pool ="max",encoder=None,dropout=0.0,word_vectors=None,emb_dims=[],activation=None,num_class=0,recurr=1)
@@ -106,12 +107,12 @@ class GNNBlock(Module):
         edge_attr = data.edge_attr
 
         # Pass x into model
-        print("NODES:")
-        print(x.shape)
-        print("EDGE INDEX:")
-        print(edge_index.shape)
-        print("EDGE ATTR:")
-        print(edge_attr.shape)
+        # print("NODES:")
+        # print(x.shape)
+        # print("EDGE INDEX:")
+        # print(edge_index.shape)
+        # print("EDGE ATTR:")
+        # print(edge_attr.shape)
         x = self.model(x = x, edge_index=edge_index)
 
         # Normalize
@@ -148,31 +149,43 @@ class MultiHeadAttentionBlock(Module):
         # self.norm = nn.GroupNorm()
         self.num_heads = num_heads
         self.scale = None
+        self.attention_mask = None
         self.query_proj = nn.Linear(d_model,key_dim*self.num_heads)
         self.key_proj = nn.Linear(d_model,key_dim*self.num_heads)
         self.value_proj = nn.Linear(d_model,value_dim*self.num_heads)
         self.out_proj = nn.Linear(value_dim*self.num_heads,d_model)
         self.cross_attn = cross_attn
-        if drouput:
+        if dropout:
             self.dropout_p = 0.5
         else:
             self.dropout_p = 0
 
-    def forward(self,data_x,data_y):
+    def create_attention_mask(self,batch):
+        mask = batch.unsqueeze(-1) == batch.unsqueeze(0)
+        mask = mask.float()
+        mask = mask.masked_fill(mask==0,float('-inf'))  
+        return mask
+
+    def forward(self,data_x,*args):
+
+        mask = self.create_attention_mask(data_x.batch)
         #input shape should be B,L,D
         if len(data_x.x.shape) < 3:
             x = data_x.x.unsqueeze(0)
         else:
             x = data_x.x
-        if len(data_y.x.shape) < 3:
-            y = data_y.x.unsqueeze(0)
-        else:
-            y = data_y.x
         B_x,L_x,D_x = x.shape
-        B_y,L_y,D_y = y.shape
-
-
         self.scale = 1/math.sqrt(D_x)
+
+        if self.cross_attn:
+            if len(data_y.x.shape) < 3:
+                y = data_y.x.unsqueeze(0)
+            else:
+                y = data_y.x
+            B_y,L_y,D_y = y.shape
+
+        # i have num_nodes x node dimension
+        #
         # d_model = D // self.n_heads
         # qkv = torch.repeat_interleave(x,3,dim=1)
         # Q,K,V = torch.chunk(qkv,3,dim=1) #Q,K,V is shape (B,L,D)
@@ -198,34 +211,33 @@ class MultiHeadAttentionBlock(Module):
             K = (K * self.scale).view(B_x*self.num_heads,d_key,L_x)
 
         weight = torch.matmul(Q,K)
-        print("Weight shape: ")
-        print(weight.shape)
+        weight = weight + mask
         weight = torch.softmax(weight.float(),dim=-1).type(weight.dtype)
+        if self.cross_attn:
+            V = V.reshape(B_x*self.num_heads,d_value,L_y)
+        else:
+            V = V.reshape(B_x*self.num_heads,d_value,L_x)
 
-        V = V.reshape(B_x*self.num_heads,d_value,L_y)
-        print(V.shape)
         V = torch.transpose(V,1,2)
         a = torch.matmul(weight,V)
         a = a.reshape(B_x,L_x,D_x)
-        print("A shape:")
-        print(a.shape)
         out = self.out_proj(a)
-        data_x.x = out
+        data_x.x = out.squeeze(0)
         return data_x
 
-class FeedForwardBlock(Module):
+class ResidueToGOMappingBlock(Module):
     # Data object: 1- edge index, 2- node feature matrix, 3- edge features
     # 2- shape: Number of nodes x Residue node feature dimension
     # option 1: 1 (CLS) x 1024 ==> GO node feature dimension x num_go_labels
     # option 2: seq_len x 1024 ==> GO node feature dimension x num_go_labels
 
-
     #Input: Seq_len x 1024 ==> Seq_len x go_labels x go_label_dim
-    def __init__(self,num_go_labels,aggr):
+    def __init__(self,num_go_labels,go_dim,fc_units,aggr_type,activation,params,**kwargs):
+        super().__init__()
         self.num_go_labels = num_go_labels
         self.go_dim = go_dim
         self.fc_units = fc_units
-        self.num_layser = num_layers
+        self.num_layers = len(fc_units)-1
         self.aggr = aggr
         if activation == "relu":
             self.activation = nn.ReLU()
@@ -238,79 +250,94 @@ class FeedForwardBlock(Module):
         elif aggr_type == "max":
             self.aggr = aggr.MedianAggregation()
         self.layers = []
+        self.layers = nn.Sequential(*[nn.Linear(self.fc_units[i],self.fc_units[i+1]) for i in range(self.num_layers)])
         # self.norm = nn.BatchNorm()
-        for i in range(len(self.fc_units)-1):
-            self.layers.append(nn.Linear(self.fc_units[i],self.fc_units[i+1]))
 
     def forward(self,data):
-        x = data.x
+        x = data.x # total num of nodes x node dimension
         for layer in self.layers:
-            x = self.activation(data.x)
-        x = x.view(-1,num_go_labels,go_dim)
-        x = self.aggr(x,index=data.batch)
-        x = x.view(num_go_labels,go_dim)
-        data.x = x
+            x = self.activation(layer(data.x))
+        
+        #print("BEFORE VIEW: ",x.shape)
+        #x = x.view(-1,self.num_go_labels,self.go_dim)
+            
+        # shape: total residues x (num go x go dim)
+        x = self.aggr(x,index=data.batch) # 2 x 512000
 
+        x = x.view(-1,self.go_dim)
+        # bs x gos x go dim => bs x gos x 1
+        data.x = x
         return data
         # num_go x go_dim
 
-
-
-
-class GNN(Module):
-    def __init__(self,params,**kwargs):
+class FeedForward(nn.Module):
+    def __init__(self,params):
         super().__init__()
-        self.num_blocks = params['num_blocks']
-        self.norm = params['norm']
-        self.channels = params['channels']
         self.fc_units = params['fc_units']
-        self.type = params['type']
-        self.gnn_act = params['gnn_act']
-        if params['fc_act'] == 'relu':
-            self.fc_act = nn.ReLU()
-        elif params['fc_act']=='elu':
-            self.fc_act = nn.ELU()
-        
-        self.classifier = params['classifier']
-        self.blocks = []
-        self.attention_heads = params['attention_heads']
-        for i in range(self.num_blocks-1):
-            self.blocks.append(GNNBlock(self.channels[i], self.channels[i+1],params=params,**kwargs))
-            self.blocks.append(nn.LayerNorm(self.channels[i+1]))
-            self.blocks.append(MultiHeadAttentionBlock(self.attention_heads, self.channels[i+1], self.channels[i+1]//self.attention_heads, self.channels[i+1]//self.attention_heads, self.channels[i+1]//self.attention_heads,False,0.5))
-            self.blocks.append(nn.LayerNorm(self.channels[i+1]))
-        
-        self.fc = [nn.Linear(self.fc_units[i],self.fc_units[i+1]) for i in range(len(self.fc_units)-1)]
-
-   
-        if params['aggr_type'] == "mean":
-            self.aggr = aggr.MeanAggregation()
-        elif params['aggr_type'] == "max":
-            self.aggr = aggr.MedianAggregation()
-        elif params['aggr_type'] == "sum":
-            self.aggr = aggr.SumAggregation()
-
+        if params['fc_act'] == "relu":
+            self.activation = nn.ReLU()
+        elif params['fc_act'] == "elu":
+            self.activation = nn.ELU()
+        elif params['fc_act'] == "silu":
+            self.activation = nn.SiLU()
+        self.layers = nn.Sequential([nn.Linear(self.fc_units[i],self.fc_units[i+1]) for i in range(len(self.fc_units)-1)])
     def forward(self,data):
-        print(self.blocks)
-        for i in range(len(self.blocks)):
-            data = self.blocks[i](data)
-        x = data.x 
-        if self.classifier == True:
-            x = self.aggr(x,index=data.batch)
-            for i,fc in enumerate(self.fc):
-                x = fc(x)
-                if i != len(self.fc)-1:
-                    x = self.fc_act(x)
-            return x
-        else:
-            return x
+        x = data.x
+        for layer in self.layers:
+            x = self.activation(layer(x))
+        data.x = x
+        return data
+    
+class GOBlock(nn.Module):
+    def __init__(self,go_units,go_processing_type,params,kwargs):
+        super().__init__()
+        self.go_layers = []
+        self.go_units = go_units
+        self.go_processing_type = go_processing_type
+        self.num_go_labels = params['num_go_labels']
+        if params['fc_act'] == "relu":
+            self.activation = nn.ReLU()
+        elif params['fc_act'] == "elu":
+            self.activation = nn.ELU()
+        elif params['fc_act'] == "silu":
+            self.activation = nn.SiLU()
+        if self.go_processing_type is not None:
+            if self.go_processing_type == "MLP":
+                for i in range(len(self.go_units)-1):
+                    self.go_layers.append(nn.Linear(self.go_units[i],self.go_units[i+1])) 
+                    self.go_layers.append(nn.LayerNorm(self.go_units[i+1]))
+            elif self.go_processing_type == "GCN":
+                for i in range(len(self.go_units)-1):
+                    self.go_layers.append(GNNBlock(self.channels[i], self.channels[i+1],"GCN",params=params,kwargs=kwargs)) 
+                    self.go_layers.append(nn.LayerNorm(self.go_units[i+1]))
+            elif self.go_processing_type == "DAGNN":
+                for i in range(len(self.go_units)-1):
+                    self.go_layers.append(GNNBlock(self.channels[i], self.channels[i+1],"DAGNN",params=params))
+                    self.go_layers.append(nn.LayerNorm(self.go_units[i+1])) 
+    def forward(self,data):
+        if self.go_processing_type == "GCN" or self.go_processing_type == "DAGNN":
+            # Need to change DataBatch object's edge_index, edge_attr (if any) attributes
 
+            pass
+        x = data.x
+        data.batch = torch.tensor([[i] * self.num_go_labels for i in range(x.shape[0]//self.num_go_labels)]).view(x.shape[0])
+        for i in range(len(self.go_layers)):
+            x = data.x
+            if isinstance(self.go_layers[i],nn.LayerNorm):
+                x = self.activation(self.go_layers[i](x))
+            elif isinstance(self.go_layers[i],nn.Linear):
+                x = self.go_layers[i](x)
+            else:
+                data = self.go_layers[i](data,edge_index=data.edge_index)
+            data.x = x
+        return data
     
 if __name__ == "__main__":
     model_params = {
     'num_classes':500,
-    'channels':[10,1248,2024,1680,2048],
-    'fc_units':[1024,800,500],
+    'channels':[1024,1248,2024,1680,2048],
+    'fc_units':[2048,1024*500],
+    'go_units':[1024,256,32,1],
     'egnn_dim':1024,
     'fc_act':"relu",
     'heads':4,
@@ -327,9 +354,10 @@ if __name__ == "__main__":
     'type':'GAT',
     'aggr_type':'mean',
     'gnn_act':'relu',
-    'num_blocks':4,
+    'num_blocks':5,
     'residual_type':'Drive',
     'attention_heads':4,
+    'cross_attention':False,
     'classifier':False,
     'norm':{
     'norm_type':'PairNorm',
@@ -346,15 +374,23 @@ if __name__ == "__main__":
     H_x = torch.rand((6,1024)) # 3 nodes, in channels 10
     edge_index = torch.tensor([[0,1,0],[1,2,2]])# edge index
     edge_weights = torch.rand((3,5))
-    data_x = Data(x = H_x,edge_index = edge_index,edge_attr = edge_weights)
+    y_1 = torch.randint(0,2,(500,1))
+    data_x = Data(x = H_x,edge_index = edge_index,edge_attr = edge_weights,y = y_1)
     data_obj_list.append(data_x)
     H_y = torch.rand((10,1024)) # 3 nodes, in channels 10
     edge_index = torch.tensor([[0,0,0,2,2,2,1],[5,1,2,1,4,3,6]])# edge index
     edge_weights = torch.rand((7,5))
-    data_y = Data(x = H_y,edge_index = edge_index,edge_attr = edge_weights)
+    y_2 = torch.randint(0,2,(500,1))
+    data_y = Data(x = H_y,edge_index = edge_index,edge_attr = edge_weights,y = y_2)
     data_obj_list.append(data_y)
-    attention = MultiHeadAttentionBlock(4, 1024, 256, 256, 256)
-    output = attention(data_x,data_y)
+    batch = Batch.from_data_list(data_obj_list)
+    print("BATCH: ",batch)
+    output = model(batch)
+    print(model)
+    # print("BATCH: ")
+    # print(batch)
+    # attention = MultiHeadAttentionBlock(4, 1024, 256, 256, 256,False,0.5)
+    # output = attention(batch,None)
     
     # out = model(data)
     # print(out)

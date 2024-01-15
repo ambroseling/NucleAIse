@@ -1,6 +1,9 @@
 import torch
 import torchvision
 import numpy as np
+
+# Loss functions
+
 #Class based hierarchical loss https://www.ijcai.org/proceedings/2021/0337.pdf
 class HCLLoss:
     #Input to HCLLoss class:
