@@ -67,7 +67,7 @@ def generate_go_graph(go_list):
     go_list += additional_go_list
 
 
-
+    temp_nodes = set(go_list)
     nodes = set(go_list)
     edges = set() # Set of tuples (parent, child)
     bp = 'GO:0008150'
@@ -78,34 +78,39 @@ def generate_go_graph(go_list):
         if response.status_code == 200 and response.json()['numberOfHits'] > 0:
             path = response.json()['results'][0]
             for edge in path:
-                nodes.add(edge['parent'])
+                temp_nodes.add(edge['parent'])
                 edges.add((edge['parent'], edge['child']))
         
         response = requests.get(url.format(child_ids=go, parent_ids=mf))
         if response.status_code == 200 and response.json()['numberOfHits'] > 0:
             path = response.json()['results'][0]
             for edge in path:
-                nodes.add(edge['parent'])
+                temp_nodes.add(edge['parent'])
                 edges.add((edge['parent'], edge['child']))
 
         response = requests.get(url.format(child_ids=go, parent_ids=cc))
         if response.status_code == 200 and response.json()['numberOfHits'] > 0:
             path = response.json()['results'][0]
             for edge in path:
-                nodes.add(edge['parent'])
+                temp_nodes.add(edge['parent'])
                 edges.add((edge['parent'], edge['child']))
 
     # Tokenize GOs
-    map = {}
-    for i, go in enumerate(nodes):
-        map[go] = i # Node Indexes: [0, len(nodes)-1]
-
+    go_to_index_map = {}
+    index_to_go_map = {}
+    for i, go in enumerate(temp_nodes):
+        go_to_index_map[go] = i # Node Indexes: [0, len(nodes)-1]
+        index_to_go_map[i] = go
     mapped_edges = set() 
     for parent, child in edges:
-        mapped_edges.add((map[parent], map[child]))
+        mapped_edges.add((go_to_index_map[parent], go_to_index_map[child]))
 
-    return len(nodes), mapped_edges
+    print("MAP: ")
+    print(map)
+    return len(nodes), mapped_edges, go_to_index_map, index_to_go_map
 
 if __name__ == "__main__":
     go_list = get_go_list_from_data()
-    generate_go_graph(go_list)
+    num_nodes, mapped_edges,go_to_index_map, index_to_go_map =  generate_go_graph(go_list)
+    print("MAPPED EDGES: ")
+    print(mapped_edges)

@@ -1,3 +1,4 @@
 /models/gnn/raw
 /models/gnn/processed
+/models/gnn/processed.zip
 feature_matrx.pt

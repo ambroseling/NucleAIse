@@ -1,6 +1,6 @@
 import torch.nn as nn
 from layers.blocks import GNNBlock, MultiHeadAttentionBlock,ResidueToGOMappingBlock,GOBlock,FeedForward
-
+from utils.go_graph_generation import generate_go_graph
 from torch_geometric.nn import aggr
 from torch_geometric.data import Data,Batch
 import torch_geometric.nn.functional as F
@@ -29,8 +29,8 @@ class GNN(nn.Module):
         self.go_processing_type = params['go_processing_type']
         self.go_units = params['go_units']
         self.go_dim = None
-        self.num_go_labels = None
-
+        self.num_go_labels, self.go_edge_index,self.go_to_index_map,self.index_to_go_map = generate_go_graph(params["go_list"])
+        self.num_go_labels = params['num_go_labels']
         for i in range(self.num_blocks-1):
             self.blocks.append(GNNBlock(self.channels[i], self.channels[i+1],"GCN",params=params))
             self.blocks.append(nn.LayerNorm(self.channels[i+1]))
@@ -38,7 +38,7 @@ class GNN(nn.Module):
             self.blocks.append(nn.LayerNorm(self.channels[i+1]))
         self.blocks = nn.Sequential(*self.blocks)
 
-        self.mapping = ResidueToGOMappingBlock(500,1024,self.mapping_units,"mean","relu",params=params)
+        self.mapping = ResidueToGOMappingBlock(self.num_go_labels,self.go_units[0],self.mapping_units,"mean","relu",params=params)
         
 
         if self.go_processing_type == None:
@@ -50,7 +50,7 @@ class GNN(nn.Module):
                 self.aggr = aggr.SumAggregation()
             self.fc = FeedForward(params=params)
         else:
-            self.go_block = GOBlock(self.go_units,go_processing_type="MLP",params=params,kwargs=kwargs)
+            self.go_block = GOBlock(self.num_go_labels, self.go_edge_index,self.go_units,go_processing_type="MLP",params=params,kwargs=kwargs)
         
         
     def forward(self,data,*args):
@@ -71,11 +71,11 @@ class GNN(nn.Module):
             else:
                 data = layer(data)
         data = self.mapping(data)
+
         if self.go_processing_type == None:
             data = self.aggr(data)
             data = self.fc(data)
         else:
             data = self.go_block(data)
-        print(data)
 
         return data
