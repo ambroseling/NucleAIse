@@ -232,12 +232,12 @@ class ResidueToGOMappingBlock(Module):
     # option 2: seq_len x 1024 ==> GO node feature dimension x num_go_labels
 
     #Input: Seq_len x 1024 ==> Seq_len x go_labels x go_label_dim
-    def __init__(self,num_go_labels,go_dim,fc_units,aggr_type,activation,params,**kwargs):
+    def __init__(self,num_go_labels,go_dim,mapping_units,aggr_type,activation,params,**kwargs):
         super().__init__()
         self.num_go_labels = num_go_labels
         self.go_dim = go_dim
-        self.fc_units = fc_units
-        self.num_layers = len(fc_units)-1
+        self.mapping_units = mapping_units
+        self.num_layers = len(mapping_units)-1
         self.aggr = aggr
         if activation == "relu":
             self.activation = nn.ReLU()
@@ -250,7 +250,7 @@ class ResidueToGOMappingBlock(Module):
         elif aggr_type == "max":
             self.aggr = aggr.MedianAggregation()
         self.layers = []
-        self.layers = nn.Sequential(*[nn.Linear(self.fc_units[i],self.fc_units[i+1]) for i in range(self.num_layers)])
+        self.layers = nn.Sequential(*[nn.Linear(self.mapping_units[i],self.mapping_units[i+1]) for i in range(self.num_layers)])
         # self.norm = nn.BatchNorm()
 
     def forward(self,data):
@@ -289,12 +289,17 @@ class FeedForward(nn.Module):
         return data
     
 class GOBlock(nn.Module):
-    def __init__(self,go_units,go_processing_type,params,kwargs):
+    def __init__(self,num_go_labels,go_edge_index,go_units,go_processing_type,params,kwargs):
         super().__init__()
         self.go_layers = []
         self.go_units = go_units
+        self.go_edge_index = torch.transpose(torch.tensor(list(go_edge_index)),0,1).repeat(1,params['batch_size'])
+        shift_index = torch.tensor([[i*num_go_labels]* go_edge_index.shape[1] for i in range(params['batch_size'])])
+        self.go_edge_index = self.go_edge_index + shift_index
+        self.ptr = torch.tensor(np.arange(params['batch_size'])*num_go_labels)
+        self.batch = torch.tensor([[i] * self.num_go_labels for i in range(params['batch_size']//self.num_go_labels)]).view(params['batch_size'])
         self.go_processing_type = go_processing_type
-        self.num_go_labels = params['num_go_labels']
+        self.num_go_labels = num_go_labels
         if params['fc_act'] == "relu":
             self.activation = nn.ReLU()
         elif params['fc_act'] == "elu":
@@ -314,13 +319,17 @@ class GOBlock(nn.Module):
                 for i in range(len(self.go_units)-1):
                     self.go_layers.append(GNNBlock(self.channels[i], self.channels[i+1],"DAGNN",params=params))
                     self.go_layers.append(nn.LayerNorm(self.go_units[i+1])) 
+        
+
     def forward(self,data):
         if self.go_processing_type == "GCN" or self.go_processing_type == "DAGNN":
             # Need to change DataBatch object's edge_index, edge_attr (if any) attributes
 
             pass
         x = data.x
-        data.batch = torch.tensor([[i] * self.num_go_labels for i in range(x.shape[0]//self.num_go_labels)]).view(x.shape[0])
+        data.edge_index = self.go_edge_index 
+        data.batch = self.batch
+        data.ptr = self.ptr
         for i in range(len(self.go_layers)):
             x = data.x
             if isinstance(self.go_layers[i],nn.LayerNorm):
@@ -334,6 +343,7 @@ class GOBlock(nn.Module):
     
 if __name__ == "__main__":
     model_params = {
+    'batch_size':2,
     'num_classes':500,
     'channels':[1024,1248,2024,1680,2048],
     'fc_units':[2048,1024*500],

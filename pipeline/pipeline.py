@@ -9,9 +9,13 @@ import matplotlib.pyplot as plt
 import matplotlib.pyplot as plt
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
-# from models.gnn.preprocess_gnn import load_gnn_data
+from models.gnn.preprocess_gnn import load_gnn_data
 from models.deepgnn import GNN
+from models.gnn.preprocess_gnn import load_completed_gnn_datasets
+from utils.go_graph_generation import generate_go_graph
+from utils.go_graph_generation import get_go_list_from_data
 from torch_geometric.data import Data,Batch
 import torch_geometric
 import torch.nn as nn
@@ -58,6 +62,7 @@ class Pipeline():
         self.training_time = 0.0
         self.avg_inference_time = 0.0
         self.avg_time_per_epoch = 0.0
+        
 
         #loss fn & optimizer
         loss_type = training_params['loss_fn']
@@ -71,8 +76,7 @@ class Pipeline():
 
 
     def load_data(self,loader):
-        #self.train_loader,self.val_loader,self.test_loader = load_gnn_data()
-        self.train_loader = loader
+        self.train_loader,self.val_loader,self.test_loader = load_completed_gnn_datasets()
         print("###############DATA LOADING SUCCESS###############")
 
         print("\n")
@@ -108,19 +112,19 @@ class Pipeline():
             self.training_loss.append(self.avg_train_loss )
             self.training_acc.append(self.avg_train_acc )
             self.avg_inference_time /= len(self.train_loader)
-            # with torch.no_grad():
-            #     for batch in tqdm(self.val_loader):
-            #         output = self.model(batch)
-            #         loss = self.loss_fn(output,batch_y)
-            #         self.avg_val_acc = self.get_acc(output,batch_y)
-            #         self.avg_val_loss += loss.item()
-            #     self.avg_val_acc /= len(self.val_loader)
-            #     self.avg_val_loss /= len(self.val_loader)
-            #     self.val_loss.append(self.avg_val_loss) 
-            #     self.val_acc.append(self.avg_val_acc)
-            #     if self.avg_val_loss < self.best_val_loss:
-            #         self.best_val_loss = self.avg_val_loss
-            #         self.best_epoch = epoch
+            with torch.no_grad():
+                for batch in tqdm(self.val_loader):
+                    output = self.model(batch)
+                    loss = self.loss_fn(output.x,output.y.float())
+                    self.avg_val_acc += self.get_acc(output.x,output.y.float())
+                    self.avg_val_loss += loss.item()
+                self.avg_val_acc /= len(self.val_loader)
+                self.avg_val_loss /= len(self.val_loader)
+                self.val_loss.append(self.avg_val_loss) 
+                self.val_acc.append(self.avg_val_acc)
+                if self.avg_val_loss < self.best_val_loss:
+                    self.best_val_loss = self.avg_val_loss
+                    self.best_epoch = epoch
             #         self.best_path = f'../checkpoints/{self.model_name}_bs{self.batch_size}_lr{self.learning_rate}_win{self.seq_len}-{self.target_len}-{self.pred_len}_v{self.velocity}_sc{self.scale}_ep{epoch}.pth'
             epoch_end = time.time()
             epoch_time = epoch_end-epoch_start
@@ -218,12 +222,19 @@ class Pipeline():
 
 
 if __name__ == "__main__":
+
+    go_list = []
+    with open('/Users/ambroseling/Desktop/NucleAIse/nucleaise/go_set.txt','r') as file:
+        go_list = file.read().splitlines()
+    
     model_params = {
-    'num_go_labels':500,
+    'batch_size':8,
+    'num_go_labels':len(go_list),
+    'go_list':go_list,
     'channels':[1024,1248,2024,1680,2048],
-    'mapping_units':[2048,1024*500],
-    'fc_units':[2048,500],
-    'go_units':[1024,256,32,1],
+    'mapping_units':[2048,512*len(go_list)],
+    'fc_units':[2048,len(go_list)],
+    'go_units':[512,256,32,1],
     'go_processing_type':'MLP',
     'egnn_dim':1024,
     'fc_act':"relu",
@@ -255,31 +266,38 @@ if __name__ == "__main__":
     'norm_affine':True,
     'norm_track_running_stats':True
     }}
-    model = GNN(model_params,type="GCN",activation="relu")
 
-    data_obj_list = []
-    H_x = torch.rand((6,1024)) # 3 nodes, in channels 10
-    edge_index = torch.tensor([[0,1,0],[1,2,2]])# edge index
-    edge_weights = torch.rand((3,5))
-    y_1 = torch.randint(0,2,(500,1))
-    data_x = Data(x = H_x,edge_index = edge_index,edge_attr = edge_weights,y = y_1)
-    data_obj_list.append(data_x)
-    H_y = torch.rand((10,1024)) # 3 nodes, in channels 10
-    edge_index = torch.tensor([[0,0,0,2,2,2,1],[5,1,2,1,4,3,6]])# edge index
-    edge_weights = torch.rand((7,5))
-    y_2 = torch.randint(0,2,(500,1))
-    data_y = Data(x = H_y,edge_index = edge_index,edge_attr = edge_weights,y = y_2)
-    data_obj_list.append(data_y)
-    batch = Batch.from_data_list(data_obj_list)
-    loader = torch_geometric.loader.DataLoader(batch,batch_size=2)
     training_params = {
         'name':'DeepGNN',
-        'batch_size':32,
+        'batch_size':8,
         'epochs':10,
         'learning_rate':1e-04,
         'loss_fn':'bceloss', #BCELoss, MCLoss, HCLLoss
         'device':'cpu'
     }
+    model = GNN(model_params,type="GCN",activation="relu")
+
+    # data_obj_list = []
+    # H_x = torch.rand((6,1024)) # 3 nodes, in channels 10
+    # edge_index = torch.tensor([[0,1,0],[1,2,2]])# edge index
+    # edge_weights = torch.rand((3,5))
+    # y_1 = torch.randint(0,2,(2048,1))
+    # data_x = Data(x = H_x,edge_index = edge_index,edge_attr = edge_weights,y = y_1)
+    # data_obj_list.append(data_x)
+    # H_y = torch.rand((10,1024)) # 3 nodes, in channels 10
+    # edge_index = torch.tensor([[0,0,0,2,2,2,1],[5,1,2,1,4,3,6]])# edge index
+    # edge_weights = torch.rand((7,5))
+    # y_2 = torch.randint(0,2,(2048,1))
+    # data_y = Data(x = H_y,edge_index = edge_index,edge_attr = edge_weights,y = y_2)
+    # data_obj_list.append(data_y)
+    # batch = Batch.from_data_list(data_obj_list)
+    # print("BATCH: ")
+    # print(batch)
+
+    # print(batch.edge_index)
+    # print(batch.batch)
+    # loader = torch_geometric.loader.DataLoader(batch,batch_size=2)
+
     pipeline = Pipeline(training_params=training_params,model=model)
-    pipeline.load_data(loader)
+    pipeline.load_dat()
     pipeline.train()
