@@ -297,16 +297,16 @@ class CompleteGNNDataset(InMemoryDataset):
         batch_num, offset = self.ids[index]
         data, slices = torch.load('models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=batch_num))
 
-        go_list = []
+        go_encoding = [0] * 2048
         for go_tensor in data['y'][slices['y'][offset]:slices['y'][offset+1]]:
             go = "GO:" + str(go_tensor.item()).zfill(7)
             if go in self.go_set_map:
-                go_list.append(self.go_set_map[go])
+                go_encoding[self.go_set_map[go]] = 1        
 
         data['x'] = data['x'][slices['x'][offset]:slices['x'][offset+1]]
         data['edge_index'] = data['edge_index'][:, slices['edge_index'][offset]:slices['edge_index'][offset+1]]
         data['edge_attr'] = data['edge_attr'][slices['edge_attr'][offset]:slices['edge_attr'][offset+1]]
-        data['y'] = torch.tensor(go_list)
+        data['y'] = torch.tensor(go_encoding)
         return data
 
     def __len__(self):
