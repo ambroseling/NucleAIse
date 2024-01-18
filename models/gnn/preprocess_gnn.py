@@ -276,6 +276,70 @@ class GNNDataset(InMemoryDataset):
         return self.len
 
 
+
+class CompleteGNNDataset(InMemoryDataset):
+    def __init__(self, root, type, transform=None, pre_transform=None, pre_filter=None,):
+        super().__init__(root, transform, pre_transform, pre_filter)
+        self.filename = 'models/gnn/dataset_batches/{type}_batch_{i}.json'
+
+        # Get IDs
+        self.ids = []
+        with open('{type}_set_ids.txt'.format(type=type), "r") as file:
+            for line in file.readlines():
+                batch_num, offset = line.strip('()\n').split(",")
+                self.ids.append(int(batch_num), int(offset))
+
+        # Helper Variables
+        with open("go_set_mapping.json", "r") as file:
+            self.go_set_map = json.load(file)
+
+    def __getitem__(self, index):
+        batch_num, offset = self.ids[index]
+        data, slices = torch.load('models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=batch_num))
+
+        go_list = []
+        for go_tensor in data['y'][slices['y'][offset]:slices['y'][offset+1]]:
+            go = "GO:" + str(go_tensor.item()).zfill(7)
+            if go in self.go_set_map:
+                go_list.append(self.go_set_map[go])
+
+        data['x'] = data['x'][slices['x'][offset]:slices['x'][offset+1]]
+        data['edge_index'] = data['edge_index'][:, slices['edge_index'][offset]:slices['edge_index'][offset+1]]
+        data['edge_attr'] = data['edge_attr'][slices['edge_attr'][offset]:slices['edge_attr'][offset+1]]
+        data['y'] = torch.tensor(go_list)
+        return data
+
+    def __len__(self):
+        return len(self.ids)
+
+
+    # TODO: Move batch_sorting.py and batch_reforming.py logic to here
+    @property
+    def raw_file_names(self):
+        return []
+    @property
+    def processed_file_names(self):
+        return []
+    def download(self):
+        pass
+    def process(self):
+        pass
+
+
+def create_loader(type, batch_size):
+    dataset = CompleteGNNDataset(
+        os.getcwd() + "/models/gnn",
+        type=type
+    )
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+def load_completed_gnn_datasets(batch_size):
+    train_loader = create_loader('train', batch_size=batch_size)
+    test_loader = create_loader('test', batch_size=batch_size)
+    val_loader = create_loader('val', batch_size=batch_size)
+    return train_loader, test_loader, val_loader
+
+    
 def load_gnn_data(batch_size, goa_percentage=1, limit=None):
     dataset = GNNDataset(
         os.getcwd() + "/models/gnn", 
