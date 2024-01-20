@@ -29,7 +29,8 @@ class GNN(nn.Module):
         self.go_processing_type = params['go_processing_type']
         self.go_units = params['go_units']
         self.go_dim = None
-        self.num_go_labels, self.go_edge_index,self.go_to_index_map,self.index_to_go_map = generate_go_graph(params["go_list"])
+        #self.num_go_labels, self.go_edge_index,self.go_to_index_map,self.index_to_go_map = generate_go_graph(params["go_list"])
+        self.go_edge_index = None
         self.num_go_labels = params['num_go_labels']
         for i in range(self.num_blocks-1):
             self.blocks.append(GNNBlock(self.channels[i], self.channels[i+1],"GCN",params=params))
@@ -56,6 +57,7 @@ class GNN(nn.Module):
     def forward(self,data,*args):
 
          # data.x shape is (total_nodes,node_dim)
+        print("reached here before layer blocks!")
         for layer in self.blocks:
             if isinstance(layer,nn.LayerNorm):
                 x = data.x
@@ -70,8 +72,9 @@ class GNN(nn.Module):
 
             else:
                 data = layer(data)
+        print("reached here before mapping!")
         data = self.mapping(data)
-
+        print("reached here before go block!")
         if self.go_processing_type == None:
             data = self.aggr(data)
             data = self.fc(data)

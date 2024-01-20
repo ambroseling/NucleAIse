@@ -75,8 +75,8 @@ class Pipeline():
         
 
 
-    def load_data(self,loader):
-        self.train_loader,self.val_loader,self.test_loader = load_completed_gnn_datasets()
+    def load_data(self):
+        self.train_loader,self.val_loader,self.test_loader = load_completed_gnn_datasets(batch_size=1)
         print("###############DATA LOADING SUCCESS###############")
 
         print("\n")
@@ -94,10 +94,12 @@ class Pipeline():
             self.avg_val_loss = 0.0
             self.avg_train_acc = 0.0
             self.avg_val_acc = 0.0
-            for batch in tqdm(self.train_loader):
+            for batch in self.train_loader:
                 #batch_y = torch.reshape(batch.y.float(),(self.batch_size,self.num_features))
+                print(" ======= Processing a batch ... =======")
                 inf_start = time.time()
                 output = self.model(batch)
+                output.y = output.y.unsqueeze(-1)
                 inf_end = time.time()
                 self.avg_inference_time += (inf_end-inf_start)
                 loss = self.loss_fn(output.x,output.y.float())
@@ -224,17 +226,17 @@ class Pipeline():
 if __name__ == "__main__":
 
     go_list = []
-    with open('/Users/ambroseling/Desktop/NucleAIse/nucleaise/go_set.txt','r') as file:
+    with open('/home/ubuntu/nucleaise/NucleAIse/go_set.txt','r') as file:
         go_list = file.read().splitlines()
     
     model_params = {
     'batch_size':8,
     'num_go_labels':len(go_list),
     'go_list':go_list,
-    'channels':[1024,1248,2024,1680,2048],
-    'mapping_units':[2048,512*len(go_list)],
+    'channels':[1024,2048],
+    'mapping_units':[2048,10*len(go_list)],
     'fc_units':[2048,len(go_list)],
-    'go_units':[512,256,32,1],
+    'go_units':[10,1],
     'go_processing_type':'MLP',
     'egnn_dim':1024,
     'fc_act':"relu",
@@ -252,7 +254,7 @@ if __name__ == "__main__":
     'type':'GAT',
     'aggr_type':'mean',
     'gnn_act':'relu',
-    'num_blocks':5,
+    'num_blocks':2,
     'residual_type':'Drive',
     'attention_heads':4,
     'cross_attention':False,
@@ -299,5 +301,5 @@ if __name__ == "__main__":
     # loader = torch_geometric.loader.DataLoader(batch,batch_size=2)
 
     pipeline = Pipeline(training_params=training_params,model=model)
-    pipeline.load_dat()
+    pipeline.load_data()
     pipeline.train()
