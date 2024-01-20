@@ -293,11 +293,13 @@ class GOBlock(nn.Module):
         super().__init__()
         self.go_layers = []
         self.go_units = go_units
-        self.go_edge_index = torch.transpose(torch.tensor(list(go_edge_index)),0,1).repeat(1,params['batch_size'])
-        shift_index = torch.tensor([[i*num_go_labels]* go_edge_index.shape[1] for i in range(params['batch_size'])])
-        self.go_edge_index = self.go_edge_index + shift_index
-        self.ptr = torch.tensor(np.arange(params['batch_size'])*num_go_labels)
-        self.batch = torch.tensor([[i] * self.num_go_labels for i in range(params['batch_size']//self.num_go_labels)]).view(params['batch_size'])
+        if go_edge_index:
+            self.go_edge_index = torch.transpose(torch.tensor(list(go_edge_index)),0,1).repeat(1,params['batch_size'])
+            shift_index = torch.tensor([[i*num_go_labels]* go_edge_index.shape[1] for i in range(params['batch_size'])])
+            self.go_edge_index = self.go_edge_index + shift_index
+            self.ptr = torch.tensor(np.arange(params['batch_size'])*num_go_labels)
+            self.batch = torch.tensor([[i] * self.num_go_labels for i in range(params['batch_size']//self.num_go_labels)]).view(params['batch_size'])
+            
         self.go_processing_type = go_processing_type
         self.num_go_labels = num_go_labels
         if params['fc_act'] == "relu":
@@ -324,12 +326,11 @@ class GOBlock(nn.Module):
     def forward(self,data):
         if self.go_processing_type == "GCN" or self.go_processing_type == "DAGNN":
             # Need to change DataBatch object's edge_index, edge_attr (if any) attributes
-
-            pass
+            data.edge_index = self.go_edge_index 
+            data.batch = self.batch
+            data.ptr = self.ptr
         x = data.x
-        data.edge_index = self.go_edge_index 
-        data.batch = self.batch
-        data.ptr = self.ptr
+
         for i in range(len(self.go_layers)):
             x = data.x
             if isinstance(self.go_layers[i],nn.LayerNorm):
@@ -347,7 +348,7 @@ if __name__ == "__main__":
     'num_classes':500,
     'channels':[1024,1248,2024,1680,2048],
     'fc_units':[2048,1024*500],
-    'go_units':[1024,256,32,1],
+    'go_units':[1024,1],
     'egnn_dim':1024,
     'fc_act':"relu",
     'heads':4,

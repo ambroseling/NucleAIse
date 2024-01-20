@@ -3,7 +3,7 @@ import csv
 import requests
 import matplotlib.pyplot as plt
 
-input_file = csv.DictReader(open("./preprocessing/data/sp_db.csv"))
+# input_file = csv.DictReader(open("./preprocessing/data/sp_db.csv"))
 
 
 

@@ -23,6 +23,9 @@ class Database(Database):
         pass
 
 
+
+
+
 class GNNDataset(InMemoryDataset):
     def __init__(self, root, batch_size, goa_percentage=1, train=True, transform=None, pre_transform=None, pre_filter=None, limit=None,database=None):
         self.limit = limit
@@ -280,23 +283,24 @@ class GNNDataset(InMemoryDataset):
 class CompleteGNNDataset(InMemoryDataset):
     def __init__(self, root, type, transform=None, pre_transform=None, pre_filter=None,):
         super().__init__(root, transform, pre_transform, pre_filter)
-        self.filename = 'models/gnn/dataset_batches/{type}_batch_{i}.json'
+        self.filename = '/home/ubuntu/nucleaise/NucleAIse/models/gnn/dataset_batches/{type}_batch_{i}.json'
 
         # Get IDs
         self.ids = []
-        with open('{type}_set_ids.txt'.format(type=type), "r") as file:
+        with open('/home/ubuntu/nucleaise/NucleAIse/{type}_set_ids.txt'.format(type=type), "r") as file:
             for line in file.readlines():
                 batch_num, offset = line.strip('()\n').split(",")
-                self.ids.append(int(batch_num), int(offset))
+                self.ids.append((int(batch_num), int(offset)))
 
         # Helper Variables
-        with open("go_set_mapping.json", "r") as file:
+        with open("/home/ubuntu/nucleaise/NucleAIse/go_set_mapping.json", "r") as file:
             self.go_set_map = json.load(file)
 
     def __getitem__(self, index):
         batch_num, offset = self.ids[index]
-        data, slices = torch.load('models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=batch_num))
-
+        print("Batch num: ",batch_num)
+        data, slices = torch.load('/home/ubuntu/nucleaise/NucleAIse/models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=batch_num))
+        print(type(data))
         go_encoding = [0] * 2048
         for go_tensor in data['y'][slices['y'][offset]:slices['y'][offset+1]]:
             go = "GO:" + str(go_tensor.item()).zfill(7)
@@ -307,6 +311,7 @@ class CompleteGNNDataset(InMemoryDataset):
         data['edge_index'] = data['edge_index'][:, slices['edge_index'][offset]:slices['edge_index'][offset+1]]
         data['edge_attr'] = data['edge_attr'][slices['edge_attr'][offset]:slices['edge_attr'][offset+1]]
         data['y'] = torch.tensor(go_encoding)
+        print(data)
         return data
 
     def __len__(self):
@@ -389,22 +394,29 @@ def load_gnn_data(batch_size, goa_percentage=1, limit=None):
     # test_loader = DataLoader(dataset=test_set, batch_size=8, shuffle=True)
     # return train_loader,val_loader,test_loader
 
-
 if __name__ == '__main__':
-    batch_size = 100
-    train_loader, val_loader, test_loader = load_gnn_data(batch_size=batch_size)
-    reconstructed_dataset = []
-    for batch in train_loader:
-        reconstructed_dataset += batch.to_data_list()
+    # data,slice =  torch.load('/home/ubuntu/nucleaise/NucleAIse/models/gnn/processed/dataset_batch_{i}.pt'.format(i=134))
+    # print(data)
+    # for i in range(1, 196):
+    #     try:
+    #         data,slice =  torch.load('/home/ubuntu/nucleaise/NucleAIse/models/gnn/processed/dataset_batch_{i}.pt'.format(i=i))
+    #         print(data)
+    #     except:
+    #         print(i)
+    # batch_size = 100
+    # train_loader, val_loader, test_loader = load_gnn_data(batch_size=batch_size)
+    # reconstructed_dataset = []
+    # for batch in train_loader:
+    #     reconstructed_dataset += batch.to_data_list()
     
-    for batch in val_loader:
-        reconstructed_dataset += batch.to_data_list()
+    # for batch in val_loader:
+    #     reconstructed_dataset += batch.to_data_list()
 
-    for batch in test_loader:
-        reconstructed_dataset += batch.to_data_list()
+    # for batch in test_loader:
+    #     reconstructed_dataset += batch.to_data_list()
 
-    # print(reconstructed_dataset)
-    print(len(reconstructed_dataset))
+    # # print(reconstructed_dataset)
+    # print(len(reconstructed_dataset))
 
     # original_dataset = torch.load("models/gnn/processed/full_dataset.pt")
 

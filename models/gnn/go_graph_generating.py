@@ -3,19 +3,19 @@ import csv
 import requests
 import matplotlib.pyplot as plt
 
-input_file = csv.DictReader(open("models/gnn/raw/sp_db.csv"))
+# input_file = csv.DictReader(open("models/gnn/raw/sp_db.csv"))
 
-go_set = set()
-goa_list = []
-for row in input_file:
-    for go in row['goa'].strip('][').split(', '):
-        go_set.add(go.strip('\''))
-        goa_list.append(int(go[4:11]))
+# go_set = set()
+# goa_list = []
+# for row in input_file:
+#     for go in row['goa'].strip('][').split(', '):
+#         go_set.add(go.strip('\''))
+#         goa_list.append(int(go[4:11]))
 
 
-go_list = list(go_set)
-go_list = go_list[0:50]
-print(len(go_list))
+# go_list = list(go_set)
+# go_list = go_list[0:50]
+# print(len(go_list))
 
 url = 'https://www.ebi.ac.uk/QuickGO/services/ontology/go/terms/{child_ids}/paths/{parent_ids}?relations=is_a'
 
