@@ -278,7 +278,9 @@ if __name__ == "__main__":
         'device':'cpu'
     }
     model = GNN(model_params,type="GCN",activation="relu")
-
+    train_loader, test_loader, val_loader = load_completed_gnn_datasets(batch_size=1)
+    for batch in train_loader:
+        output = model(batch)
     # data_obj_list = []
     # H_x = torch.rand((6,1024)) # 3 nodes, in channels 10
     # edge_index = torch.tensor([[0,1,0],[1,2,2]])# edge index
@@ -300,6 +302,6 @@ if __name__ == "__main__":
     # print(batch.batch)
     # loader = torch_geometric.loader.DataLoader(batch,batch_size=2)
 
-    pipeline = Pipeline(training_params=training_params,model=model)
-    pipeline.load_data()
-    pipeline.train()
+    # pipeline = Pipeline(training_params=training_params,model=model)
+    # pipeline.load_data()
+    # pipeline.train()

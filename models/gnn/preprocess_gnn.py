@@ -268,11 +268,13 @@ class GNNDataset(InMemoryDataset):
         file = 'dataset_batch_' + str(file_index) + '.pt'
         # print("File Name: " + str(file))
         data, slices = torch.load(os.path.join(self.processed_dir, file))
+
         data['x'] = data['x'][slices['x'][offset]:slices['x'][offset+1]]
         data['edge_index'] = data['edge_index'][:, slices['edge_index'][offset]:slices['edge_index'][offset+1]]
         data['edge_attr'] = data['edge_attr'][slices['edge_attr'][offset]:slices['edge_attr'][offset+1]]
         data['y'] = data['y'][slices['y'][offset]:slices['y'][offset+1]]
-        # print(data)
+        print(data)
+        print(slices)
         return data
 
     def __len__(self):
