@@ -61,13 +61,16 @@ class GNN(nn.Module):
         for layer in self.blocks:
             if isinstance(layer,nn.LayerNorm):
                 x = data.x
+                print("before layernorm")
                 x = layer(x)
+                print("after layernorm")
                 data.x = x
             elif isinstance(layer,MultiHeadAttentionBlock):
                 if self.cross_attention:
                     
                     data = layer(data,data)
                 else:
+                    
                     data = layer(data)
 
             else:
