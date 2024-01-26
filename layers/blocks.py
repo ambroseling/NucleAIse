@@ -9,7 +9,6 @@ import torch_geometric.nn.functional as F
 import torch.nn as nn
 from egnn_pytorch import EGNN
 import math
-
 class GNNBlock(Module):
     def __init__(
             self, 
@@ -282,10 +281,8 @@ class FeedForward(nn.Module):
             self.activation = nn.SiLU()
         self.layers = nn.Sequential([nn.Linear(self.fc_units[i],self.fc_units[i+1]) for i in range(len(self.fc_units)-1)])
     def forward(self,data):
-        x = data.x
         for layer in self.layers:
-            x = self.activation(layer(x))
-        data.x = x
+            data.x = self.activation(layer(data.x))
         return data
     
 class GOBlock(nn.Module):
@@ -321,7 +318,7 @@ class GOBlock(nn.Module):
                 for i in range(len(self.go_units)-1):
                     self.go_layers.append(GNNBlock(self.channels[i], self.channels[i+1],"DAGNN",params=params))
                     self.go_layers.append(nn.LayerNorm(self.go_units[i+1])) 
-        
+        self.go_layers = nn.Sequential(*self.go_layers)
 
     def forward(self,data):
         if self.go_processing_type == "GCN" or self.go_processing_type == "DAGNN":
@@ -329,17 +326,17 @@ class GOBlock(nn.Module):
             data.edge_index = self.go_edge_index 
             data.batch = self.batch
             data.ptr = self.ptr
-        x = data.x
-
+       
+        self.go_layers.to(data.x.device)
         for i in range(len(self.go_layers)):
-            x = data.x
+           
             if isinstance(self.go_layers[i],nn.LayerNorm):
-                x = self.activation(self.go_layers[i](x))
+                data.x = self.activation(self.go_layers[i](data.x))
             elif isinstance(self.go_layers[i],nn.Linear):
-                x = self.go_layers[i](x)
+                data.x = self.go_layers[i](data.x)
             else:
                 data = self.go_layers[i](data,edge_index=data.edge_index)
-            data.x = x
+            
         return data
     
 if __name__ == "__main__":
@@ -395,9 +392,9 @@ if __name__ == "__main__":
     data_y = Data(x = H_y,edge_index = edge_index,edge_attr = edge_weights,y = y_2)
     data_obj_list.append(data_y)
     batch = Batch.from_data_list(data_obj_list)
-    print("BATCH: ",batch)
+    # print("BATCH: ",batch)
     output = model(batch)
-    print(model)
+    # print(model)
     # print("BATCH: ")
     # print(batch)
     # attention = MultiHeadAttentionBlock(4, 1024, 256, 256, 256,False,0.5)

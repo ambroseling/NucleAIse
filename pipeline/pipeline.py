@@ -20,6 +20,7 @@ from torch_geometric.data import Data,Batch
 import torch_geometric
 import torch.nn as nn
 import math
+PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7
 
 class Pipeline():
     def __init__(self,training_params,model):
@@ -73,7 +74,8 @@ class Pipeline():
         elif loss_type == 'mcloss':
             pass
         
-
+    def count_parameters(self,model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     def load_data(self):
         self.train_loader,self.val_loader,self.test_loader = load_completed_gnn_datasets(batch_size=1)
@@ -89,16 +91,41 @@ class Pipeline():
         self.optimizer = torch.optim.Adam(self.model.parameters(),lr=self.learning_rate)
 
         for epoch in range(self.epoch):
+
             epoch_start = time.time()
             self.avg_train_loss = 0.0
             self.avg_val_loss = 0.0
             self.avg_train_acc = 0.0
             self.avg_val_acc = 0.0
+            b = 0
+            num_batches = len(self.train_loader)
+            print("My model has : ")
+            param_size = 0
+            for param in self.model.parameters():
+                param_size += param.nelement() * param.element_size()
+            buffer_size = 0
+            for buffer in self.model.buffers():
+                buffer_size += buffer.nelement() * buffer.element_size()
+
+            size_all_mb = (param_size + buffer_size) / 1024**2
+            print('model size: {:.3f}MB'.format(size_all_mb))
+            print("BEFORE TRAINING LOOP: ")
+            print("**** == Current GPU memory occupied by tensors in bytes == ****")
+            print(torch.mps.current_allocated_memory()*1e-9)
             for batch in self.train_loader:
+                print("Graph size: ",batch.x.shape[0])
+                if batch.x.shape[0] > 800:
+                    continue
                 #batch_y = torch.reshape(batch.y.float(),(self.batch_size,self.num_features))
-                print(" ======= Processing a batch ... =======")
+                print(f"=== Processing batch {b} out of {num_batches} ===")
+                batch.x = batch.x.type(torch.float32)
+                batch.y = batch.y.type(torch.float32)
+                batch.edge_attr = batch.edge_attr.type(torch.float32)
+                batch.edge_index = batch.edge_index.type(torch.long)
+                batch = batch.to(self.device)
                 inf_start = time.time()
                 output = self.model(batch)
+                # print(f"output device: {output.y.device}")
                 output.y = output.y.unsqueeze(-1)
                 inf_end = time.time()
                 self.avg_inference_time += (inf_end-inf_start)
@@ -106,9 +133,16 @@ class Pipeline():
                 acc = self.get_acc(output.x,output.y.float())
                 self.avg_train_acc += acc
                 self.avg_train_loss +=loss.item()
+                
                 loss.backward()
                 self.optimizer.step()
-                self.optimizer.zero_grad()
+                self.optimizer.zero_grad(set_to_none=True)
+                b+=1
+                print("**** == Driver allocated by Metal driver for the process in bytes == ****")
+                print(torch.mps.driver_allocated_memory()*1e-9)           
+                print("**** == Current GPU memory occupied by tensors in bytes == ****")
+                print(torch.mps.current_allocated_memory()*1e-9)
+                torch.mps.empty_cache()
             self.avg_train_acc /= len(self.train_loader)
             self.avg_train_loss /= len(self.train_loader)
             self.training_loss.append(self.avg_train_loss )
@@ -226,11 +260,11 @@ class Pipeline():
 if __name__ == "__main__":
 
     go_list = []
-    with open('/home/ubuntu/nucleaise/NucleAIse/go_set.txt','r') as file:
+    with open('nucleaise/go_set.txt','r') as file:
         go_list = file.read().splitlines()
     
     model_params = {
-    'batch_size':8,
+    'batch_size':1,
     'num_go_labels':len(go_list),
     'go_list':go_list,
     'channels':[1024,2048],
@@ -275,33 +309,9 @@ if __name__ == "__main__":
         'epochs':10,
         'learning_rate':1e-04,
         'loss_fn':'bceloss', #BCELoss, MCLoss, HCLLoss
-        'device':'cpu'
+        'device':'mps'
     }
     model = GNN(model_params,type="GCN",activation="relu")
-    train_loader, test_loader, val_loader = load_completed_gnn_datasets(batch_size=1)
-    for batch in train_loader:
-        output = model(batch)
-    # data_obj_list = []
-    # H_x = torch.rand((6,1024)) # 3 nodes, in channels 10
-    # edge_index = torch.tensor([[0,1,0],[1,2,2]])# edge index
-    # edge_weights = torch.rand((3,5))
-    # y_1 = torch.randint(0,2,(2048,1))
-    # data_x = Data(x = H_x,edge_index = edge_index,edge_attr = edge_weights,y = y_1)
-    # data_obj_list.append(data_x)
-    # H_y = torch.rand((10,1024)) # 3 nodes, in channels 10
-    # edge_index = torch.tensor([[0,0,0,2,2,2,1],[5,1,2,1,4,3,6]])# edge index
-    # edge_weights = torch.rand((7,5))
-    # y_2 = torch.randint(0,2,(2048,1))
-    # data_y = Data(x = H_y,edge_index = edge_index,edge_attr = edge_weights,y = y_2)
-    # data_obj_list.append(data_y)
-    # batch = Batch.from_data_list(data_obj_list)
-    # print("BATCH: ")
-    # print(batch)
-
-    # print(batch.edge_index)
-    # print(batch.batch)
-    # loader = torch_geometric.loader.DataLoader(batch,batch_size=2)
-
-    # pipeline = Pipeline(training_params=training_params,model=model)
-    # pipeline.load_data()
-    # pipeline.train()
+    pipline = Pipeline(training_params=training_params,model=model)
+    pipline.load_data()
+    pipline.train()
