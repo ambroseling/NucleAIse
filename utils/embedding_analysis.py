@@ -23,7 +23,7 @@ test_proteins = [
 ('P60615','MKTLLLTLVVVTIVCLDLGYTIVCHTTATSPISAVTCPPGENLCYRKMWCDAFCSSRGKVVELGCAATCPSKKPYEEVTCCSTDKCNPHPKQRPG')
 ]
 data = [
-    ('P31946','MTMDKSELVQKAKLAEQAERYDDMAAAMKAVTEQGHELSNEERNLLSVAYKNVVGARRSSWRVISSIEQKTERNEKKQQMGKEYREKIEAELQDICNDVLELLDKYLIPNATQPESKVFYLKMKGDYFRYLSEVASGDNKQTTVSNSQQAYQEAFEISKKEMQPTHPIRLGLALNFSVFYYEILNSPEKACSLAKTAFDEAIAELDTLNEESYKDSTLIMQLLRDNLTLWTSENQGDEGDAGEGEN'),
+    ('P60615','MKTLLLTLVVVTIVCLDLGYTIVCHTTATSPISAVTCPPGENLCYRKMWCDAFCSSRGKVVELGCAATCPSKKPYEEVTCCSTDKCNPHPKQRPG'),
 
 ]
 
@@ -97,27 +97,58 @@ def get_t5(data):
 # x_2 = get_t5(data)[2]
 
 
-
+dr = "pca"
+line = False
 #PCA
-esm = get_esm(data).detach().numpy()
-pca = PCA(n_components=3)
-esm_t = pca.fit_transform(esm)
+if dr == "pca":
+    esm = get_esm(data).detach().numpy()
+    pca = PCA(n_components=3)
+    esm_t = pca.fit_transform(esm)
+    print("Explained variance ESM: ")
+    print(pca.explained_variance_ratio_.cumsum())
 
-# protbert = get_bert(data).detach().numpy()
-# pca = PCA(n_components=2)
-# protbert_t = pca.fit_transform(protbert)
+    protbert = get_bert(data).detach().numpy()
+    pca = PCA(n_components=3)
+    protbert_t = pca.fit_transform(protbert)
+    print("Explained variance ProtBERT: ")
+    print(pca.explained_variance_ratio_.cumsum())
 
-t5 = get_bert(data).detach().numpy()
-pca = PCA(n_components=3)
-t5_t = pca.fit_transform(t5)
 
-fig = plt.figure()
-ax = fig.add_subplot(111,projection="3d")
-ax.scatter(esm_t[:,0], esm_t[:,1], esm_t[:,2],s=10, c='b', marker="s", label='ESM embeddings')
+    t5 = get_t5(data).detach().numpy()
+    pca = PCA(n_components=3)
+    t5_t = pca.fit_transform(t5)
+    print("Explained variance T5: ")
+    print(pca.explained_variance_ratio_.cumsum())
 
-ax.scatter(t5[:,0],t5[:,1], t5[:,2],s=10, c='r', marker="p", label='T5 embeddings')
-# ax.plot(esm_t[:,0], esm_t[:,1], esm_t[:,2], c='b')
-# ax.plot(t5_t[:,0], t5_t[:,1], t5_t[:,2], c='b')
+    fig = plt.figure()
+    ax = fig.add_subplot(111,projection="3d")
+    ax.scatter(esm_t[:,0], esm_t[:,1], esm_t[:,2],s=10, c='b', marker="s", label='ESM embeddings')
+    ax.scatter(t5[:,0],t5[:,1], t5[:,2],s=10, c='r', marker="p", label='T5 embeddings')
+    ax.scatter(protbert_t[:,0],protbert_t[:,1], protbert_t[:,2],s=10, c='g', marker="p", label='ProtBERT embeddings')
+
+else:
+    esm = get_esm(data).detach().numpy()
+    esm_t = TSNE(n_components=3, learning_rate='auto',
+             init='random', perplexity=3).fit_transform(esm)
+
+    protbert = get_bert(data).detach().numpy()
+    protbert_t = TSNE(n_components=3, learning_rate='auto',
+             init='random', perplexity=3).fit_transform(protbert)
+
+    t5 = get_t5(data).detach().numpy()
+    t5_t = TSNE(n_components=3, learning_rate='auto',
+             init='random', perplexity=3).fit_transform(t5)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111,projection="3d")
+    ax.scatter(esm_t[:,0], esm_t[:,1], esm_t[:,2],s=10, c='b', marker="s", label='ESM embeddings')
+    ax.scatter(t5[:,0],t5[:,1], t5[:,2],s=10, c='r', marker="p", label='T5 embeddings')
+    ax.scatter(protbert_t[:,0],protbert_t[:,1], protbert_t[:,2],s=10, c='g', marker="p", label='ProtBERT embeddings')
+
+if line:
+    ax.plot(esm_t[:,0], esm_t[:,1], esm_t[:,2], c='b',lw=0.5)
+    ax.plot(t5_t[:,0], t5_t[:,1], t5_t[:,2], c='r',lw=0.5)
+    ax.plot(protbert_t[:,0], protbert_t[:,1], protbert_t[:,2], c='g',lw=0.5)
 
 plt.legend(loc='upper left')
 plt.show()

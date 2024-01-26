@@ -57,13 +57,13 @@ class GNN(nn.Module):
     def forward(self,data,*args):
 
          # data.x shape is (total_nodes,node_dim)
-        print("reached here before layer blocks!")
+        # print("reached here before layer blocks!")
         for layer in self.blocks:
             if isinstance(layer,nn.LayerNorm):
                 x = data.x
-                print("before layernorm")
+                #print("before layernorm")
                 x = layer(x)
-                print("after layernorm")
+                #print("after layernorm")
                 data.x = x
             elif isinstance(layer,MultiHeadAttentionBlock):
                 if self.cross_attention:
@@ -75,9 +75,12 @@ class GNN(nn.Module):
 
             else:
                 data = layer(data)
-        print("reached here before mapping!")
+        #print("reached here before mapping!")
+        # print(f"data.x device: ",data.x.device)
+        self.mapping.to(data.x.device)
+        self.go_block.to(data.x.device)
         data = self.mapping(data)
-        print("reached here before go block!")
+        #print("reached here before go block!")
         if self.go_processing_type == None:
             data = self.aggr(data)
             data = self.fc(data)
