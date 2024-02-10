@@ -105,13 +105,6 @@ class GNNBlock(Module):
         edge_index = data.edge_index
         edge_attr = data.edge_attr
 
-        # Pass x into model
-        # print("NODES:")
-        # print(x.shape)
-        # print("EDGE INDEX:")
-        # print(edge_index.shape)
-        # print("EDGE ATTR:")
-        # print(edge_attr.shape)
         x = self.model(x = x, edge_index=edge_index)
 
         # Normalize
@@ -231,10 +224,9 @@ class ResidueToGOMappingBlock(Module):
     # option 2: seq_len x 1024 ==> GO node feature dimension x num_go_labels
 
     #Input: Seq_len x 1024 ==> Seq_len x go_labels x go_label_dim
-    def __init__(self,num_go_labels,go_dim,mapping_units,aggr_type,activation,params,**kwargs):
+    def __init__(self,num_go_labels,mapping_units,aggr_type,activation,params,**kwargs):
         super().__init__()
         self.num_go_labels = num_go_labels
-        self.go_dim = go_dim
         self.mapping_units = mapping_units
         self.num_layers = len(mapping_units)-1
         self.aggr = aggr
@@ -256,15 +248,6 @@ class ResidueToGOMappingBlock(Module):
         x = data.x # total num of nodes x node dimension
         for layer in self.layers:
             x = self.activation(layer(data.x))
-        
-        #print("BEFORE VIEW: ",x.shape)
-        #x = x.view(-1,self.num_go_labels,self.go_dim)
-            
-        # shape: total residues x (num go x go dim)
-        x = self.aggr(x,index=data.batch) # 2 x 512000
-
-        x = x.view(-1,self.go_dim)
-        # bs x gos x go dim => bs x gos x 1
         data.x = x
         return data
         # num_go x go_dim
@@ -308,16 +291,16 @@ class GOBlock(nn.Module):
         if self.go_processing_type is not None:
             if self.go_processing_type == "MLP":
                 for i in range(len(self.go_units)-1):
+                    self.go_layers.append(nn.LayerNorm(self.go_units[i]))
                     self.go_layers.append(nn.Linear(self.go_units[i],self.go_units[i+1])) 
-                    self.go_layers.append(nn.LayerNorm(self.go_units[i+1]))
             elif self.go_processing_type == "GCN":
                 for i in range(len(self.go_units)-1):
+                    self.go_layers.append(nn.LayerNorm(self.go_units[i]))
                     self.go_layers.append(GNNBlock(self.channels[i], self.channels[i+1],"GCN",params=params,kwargs=kwargs)) 
-                    self.go_layers.append(nn.LayerNorm(self.go_units[i+1]))
             elif self.go_processing_type == "DAGNN":
                 for i in range(len(self.go_units)-1):
+                    self.go_layers.append(nn.LayerNorm(self.go_units[i])) 
                     self.go_layers.append(GNNBlock(self.channels[i], self.channels[i+1],"DAGNN",params=params))
-                    self.go_layers.append(nn.LayerNorm(self.go_units[i+1])) 
         self.go_layers = nn.Sequential(*self.go_layers)
 
     def forward(self,data):

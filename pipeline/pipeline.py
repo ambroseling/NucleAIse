@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import matplotlib.pyplot as plt
 import sys
 from pathlib import Path
+from torch.profiler import profile, record_function, ProfilerActivity
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from models.gnn.preprocess_gnn import load_gnn_data
@@ -78,7 +79,7 @@ class Pipeline():
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     def load_data(self):
-        self.train_loader,self.val_loader,self.test_loader = load_completed_gnn_datasets(batch_size=1)
+        self.train_loader,self.val_loader,self.test_loader = load_completed_gnn_datasets(batch_size=2)
         print("###############DATA LOADING SUCCESS###############")
 
         print("\n")
@@ -99,58 +100,67 @@ class Pipeline():
             self.avg_val_acc = 0.0
             b = 0
             num_batches = len(self.train_loader)
-            print("My model has : ")
-            param_size = 0
-            for param in self.model.parameters():
-                param_size += param.nelement() * param.element_size()
-            buffer_size = 0
-            for buffer in self.model.buffers():
-                buffer_size += buffer.nelement() * buffer.element_size()
+            # print("My model has : ")
+            # param_size = 0
+            # for param in self.model.parameters():
+            #     param_size += param.nelement() * param.element_size()
+            # buffer_size = 0
+            # for buffer in self.model.buffers():
+            #     buffer_size += buffer.nelement() * buffer.element_size()
 
-            size_all_mb = (param_size + buffer_size) / 1024**2
-            print('model size: {:.3f}MB'.format(size_all_mb))
-            print("BEFORE TRAINING LOOP: ")
-            print("**** == Current GPU memory occupied by tensors in bytes == ****")
-            print(torch.mps.current_allocated_memory()*1e-9)
-            for batch in self.train_loader:
-                print("Graph size: ",batch.x.shape[0])
-                if batch.x.shape[0] > 800:
-                    continue
-                #batch_y = torch.reshape(batch.y.float(),(self.batch_size,self.num_features))
-                print(f"=== Processing batch {b} out of {num_batches} ===")
-                batch.x = batch.x.type(torch.float32)
-                batch.y = batch.y.type(torch.float32)
-                batch.edge_attr = batch.edge_attr.type(torch.float32)
-                batch.edge_index = batch.edge_index.type(torch.long)
-                batch = batch.to(self.device)
-                inf_start = time.time()
-                output = self.model(batch)
-                # print(f"output device: {output.y.device}")
-                output.y = output.y.unsqueeze(-1)
-                inf_end = time.time()
-                self.avg_inference_time += (inf_end-inf_start)
-                loss = self.loss_fn(output.x,output.y.float())
-                acc = self.get_acc(output.x,output.y.float())
-                self.avg_train_acc += acc
-                self.avg_train_loss +=loss.item()
-                
-                loss.backward()
-                self.optimizer.step()
-                self.optimizer.zero_grad(set_to_none=True)
-                b+=1
-                print("**** == Driver allocated by Metal driver for the process in bytes == ****")
-                print(torch.mps.driver_allocated_memory()*1e-9)           
-                print("**** == Current GPU memory occupied by tensors in bytes == ****")
-                print(torch.mps.current_allocated_memory()*1e-9)
-                torch.mps.empty_cache()
+            # size_all_mb = (param_size + buffer_size) / 1024**2
+            # print('model size: {:.3f}MB'.format(size_all_mb))
+            # print("BEFORE TRAINING LOOP: ")
+            # print("**** == Current GPU memory occupied by tensors in bytes == ****")
+            # print(torch.mps.current_allocated_memory()*1e-9)
+            with profile(activities=[ProfilerActivity.CPU], profile_memory=True,with_stack=True, record_shapes=True) as prof:
+                with record_function("model_inference"):
+                    for batch in self.train_loader:
+                        # print("Graph size: ",batch.x.shape[0])
+                        loaded_data_time = time.time()
+                        prof.step()
+                        if batch.x.shape[0] > 500 or batch.x.shape[0] <=0:
+                            continue
+                        #batch_y = torch.reshape(batch.y.float(),(self.batch_size,self.num_features))
+                        print(f"=== Processing batch {b} out of {num_batches} ===")
+                        batch.x = batch.x.type(torch.float32)
+                        batch.y = batch.y.type(torch.float32)
+                        batch.edge_attr = batch.edge_attr.type(torch.float32)
+                        batch.edge_index = batch.edge_index.type(torch.long)
+                        # batch = batch.to(self.device)
+                        inf_start = time.time()
+                        output = self.model(batch)
+                        # print(f"output device: {output.y.device}")
+                        output.y = output.y.unsqueeze(-1)
+                        output.x = output.x.reshape((4096,1))
+                        inf_end = time.time()
+                        self.avg_inference_time += (inf_end-inf_start)
+                        loss = self.loss_fn(output.x,output.y.float())
+                        acc = self.get_acc(output.x,output.y.float())
+                        self.avg_train_acc += acc
+                        self.avg_train_loss +=loss.item()
+                        print("======== Trainin Loss: ",loss.item()," ==========")
+                        loss.backward()
+                        self.optimizer.step()
+                        self.optimizer.zero_grad(set_to_none=True)
+                        # print("**** == Driver allocated by Metal driver for the process in bytes == ****")
+                        # print(torch.mps.driver_allocated_memory()*1e-9)           
+                        # print("**** == Current GPU memory occupied by tensors in bytes == ****")
+                        # print(torch.mps.current_allocated_memory()*1e-9)
+                        # torch.mps.empty_cache()
+                        b+=1
+            prof.export_chrome_trace("trace.json")
+            prof.export_memory_timeline(f"memory_snapshot.html", device="cpu")
+
             self.avg_train_acc /= len(self.train_loader)
             self.avg_train_loss /= len(self.train_loader)
             self.training_loss.append(self.avg_train_loss )
             self.training_acc.append(self.avg_train_acc )
             self.avg_inference_time /= len(self.train_loader)
             with torch.no_grad():
-                for batch in tqdm(self.val_loader):
+                for batch in (self.val_loader):
                     output = self.model(batch)
+                    output.y = output.y.unsqueeze(-1)
                     loss = self.loss_fn(output.x,output.y.float())
                     self.avg_val_acc += self.get_acc(output.x,output.y.float())
                     self.avg_val_loss += loss.item()
@@ -258,8 +268,9 @@ class Pipeline():
 
 
 if __name__ == "__main__":
+    # for i in range(1,196):
+    #     data,_ = torch.load('nucleaise/models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=i))
 
-    go_list = []
     with open('nucleaise/go_set.txt','r') as file:
         go_list = file.read().splitlines()
     
@@ -267,11 +278,9 @@ if __name__ == "__main__":
     'batch_size':1,
     'num_go_labels':len(go_list),
     'go_list':go_list,
-    'channels':[1024,2048],
-    'mapping_units':[2048,10*len(go_list)],
-    'fc_units':[2048,len(go_list)],
-    'go_units':[10,1],
-    'go_processing_type':'MLP',
+    'channels':[1024,512,256,64],
+    'mapping_units':[64,2048], #residual neural network
+    'go_units':None,
     'egnn_dim':1024,
     'fc_act':"relu",
     'heads':4,
@@ -288,7 +297,7 @@ if __name__ == "__main__":
     'type':'GAT',
     'aggr_type':'mean',
     'gnn_act':'relu',
-    'num_blocks':2,
+    'num_blocks':4,
     'residual_type':'Drive',
     'attention_heads':4,
     'cross_attention':False,
@@ -309,9 +318,11 @@ if __name__ == "__main__":
         'epochs':10,
         'learning_rate':1e-04,
         'loss_fn':'bceloss', #BCELoss, MCLoss, HCLLoss
-        'device':'mps'
+        'device':'cpu'
     }
     model = GNN(model_params,type="GCN",activation="relu")
+
+    print(model)
     pipline = Pipeline(training_params=training_params,model=model)
     pipline.load_data()
     pipline.train()

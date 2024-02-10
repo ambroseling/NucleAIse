@@ -14,7 +14,6 @@ class GNN(nn.Module):
         self.norm = params['norm']
         self.channels = params['channels']
         self.mapping_units = params['mapping_units']
-        self.fc_units = params['fc_units']
         self.type = params['type']
         self.gnn_act = params['gnn_act']
         if params['fc_act'] == 'relu':
@@ -26,7 +25,6 @@ class GNN(nn.Module):
         self.blocks = []
         self.attention_heads = params['attention_heads']
         self.cross_attention = params['cross_attention']
-        self.go_processing_type = params['go_processing_type']
         self.go_units = params['go_units']
         self.go_dim = None
         #self.num_go_labels, self.go_edge_index,self.go_to_index_map,self.index_to_go_map = generate_go_graph(params["go_list"])
@@ -39,18 +37,15 @@ class GNN(nn.Module):
             self.blocks.append(nn.LayerNorm(self.channels[i+1]))
         self.blocks = nn.Sequential(*self.blocks)
 
-        self.mapping = ResidueToGOMappingBlock(self.num_go_labels,self.go_units[0],self.mapping_units,"mean","relu",params=params)
-        
+        if params['aggr_type'] == "mean":
+            self.aggr = aggr.MeanAggregation()
+        elif params['aggr_type'] == "max":
+            self.aggr = aggr.MedianAggregation()
+        elif params['aggr_type'] == "sum":
+            self.aggr = aggr.SumAggregation()
 
-        if self.go_processing_type == None:
-            if params['aggr_type'] == "mean":
-                self.aggr = aggr.MeanAggregation()
-            elif params['aggr_type'] == "max":
-                self.aggr = aggr.MedianAggregation()
-            elif params['aggr_type'] == "sum":
-                self.aggr = aggr.SumAggregation()
-            self.fc = FeedForward(params=params)
-        else:
+        self.mapping = ResidueToGOMappingBlock(self.num_go_labels,self.mapping_units,"mean","relu",params=params)
+        if self.go_units is not None:
             self.go_block = GOBlock(self.num_go_labels, self.go_edge_index,self.go_units,go_processing_type="MLP",params=params,kwargs=kwargs)
         
         
@@ -75,16 +70,13 @@ class GNN(nn.Module):
 
             else:
                 data = layer(data)
-        #print("reached here before mapping!")
-        # print(f"data.x device: ",data.x.device)
+        data.x = self.aggr(data.x,data.batch)
         self.mapping.to(data.x.device)
-        self.go_block.to(data.x.device)
         data = self.mapping(data)
+
         #print("reached here before go block!")
-        if self.go_processing_type == None:
-            data = self.aggr(data)
-            data = self.fc(data)
-        else:
+        if self.go_units is not None:
+            self.go_block.to(data.x.device)
             data = self.go_block(data)
 
         return data
