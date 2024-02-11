@@ -35,6 +35,8 @@ class Pipeline():
         self.epoch = training_params['epochs']
         self.learning_rate = training_params['learning_rate']
         self.batch_size = training_params['batch_size']
+        self.num_labels = training_params['num_labels']
+        self.node_limit = training_params['node_limit']
         #data parameters
 
         #loaders
@@ -79,7 +81,7 @@ class Pipeline():
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     def load_data(self):
-        self.train_loader,self.val_loader,self.test_loader = load_completed_gnn_datasets(batch_size=2)
+        self.train_loader,self.val_loader,self.test_loader = load_completed_gnn_datasets(batch_size=self.batch_size)
         print("###############DATA LOADING SUCCESS###############")
 
         print("\n")
@@ -100,57 +102,36 @@ class Pipeline():
             self.avg_val_acc = 0.0
             b = 0
             num_batches = len(self.train_loader)
-            # print("My model has : ")
-            # param_size = 0
-            # for param in self.model.parameters():
-            #     param_size += param.nelement() * param.element_size()
-            # buffer_size = 0
-            # for buffer in self.model.buffers():
-            #     buffer_size += buffer.nelement() * buffer.element_size()
 
-            # size_all_mb = (param_size + buffer_size) / 1024**2
-            # print('model size: {:.3f}MB'.format(size_all_mb))
-            # print("BEFORE TRAINING LOOP: ")
-            # print("**** == Current GPU memory occupied by tensors in bytes == ****")
-            # print(torch.mps.current_allocated_memory()*1e-9)
-            with profile(activities=[ProfilerActivity.CPU], profile_memory=True,with_stack=True, record_shapes=True) as prof:
-                with record_function("model_inference"):
-                    for batch in self.train_loader:
-                        # print("Graph size: ",batch.x.shape[0])
-                        loaded_data_time = time.time()
-                        prof.step()
-                        if batch.x.shape[0] > 500 or batch.x.shape[0] <=0:
-                            continue
-                        #batch_y = torch.reshape(batch.y.float(),(self.batch_size,self.num_features))
-                        print(f"=== Processing batch {b} out of {num_batches} ===")
-                        batch.x = batch.x.type(torch.float32)
-                        batch.y = batch.y.type(torch.float32)
-                        batch.edge_attr = batch.edge_attr.type(torch.float32)
-                        batch.edge_index = batch.edge_index.type(torch.long)
-                        # batch = batch.to(self.device)
-                        inf_start = time.time()
-                        output = self.model(batch)
-                        # print(f"output device: {output.y.device}")
-                        output.y = output.y.unsqueeze(-1)
-                        output.x = output.x.reshape((4096,1))
-                        inf_end = time.time()
-                        self.avg_inference_time += (inf_end-inf_start)
-                        loss = self.loss_fn(output.x,output.y.float())
-                        acc = self.get_acc(output.x,output.y.float())
-                        self.avg_train_acc += acc
-                        self.avg_train_loss +=loss.item()
-                        print("======== Trainin Loss: ",loss.item()," ==========")
-                        loss.backward()
-                        self.optimizer.step()
-                        self.optimizer.zero_grad(set_to_none=True)
-                        # print("**** == Driver allocated by Metal driver for the process in bytes == ****")
-                        # print(torch.mps.driver_allocated_memory()*1e-9)           
-                        # print("**** == Current GPU memory occupied by tensors in bytes == ****")
-                        # print(torch.mps.current_allocated_memory()*1e-9)
-                        # torch.mps.empty_cache()
-                        b+=1
-            prof.export_chrome_trace("trace.json")
-            prof.export_memory_timeline(f"memory_snapshot.html", device="cpu")
+            # with profile(activities=[ProfilerActivity.CPU], profile_memory=True,with_stack=True, record_shapes=True) as prof:
+            #     with record_function("model_inference"):
+
+
+            for batch in tqdm(self.train_loader):
+                if batch.x.shape[0] > self.node_limit or batch.x.shape[0] <=0 or batch.y.shape[0]!=self.batch_size*self.num_labels or batch.batch[-1]+1!=self.batch_size:
+                    continue
+                print(f"=== Processing batch {b} out of {num_batches} ===")
+                batch.x = batch.x.type(torch.float32)
+                batch.y = batch.y.type(torch.float32)
+                batch.edge_attr = batch.edge_attr.type(torch.float32)
+                batch.edge_index = batch.edge_index.type(torch.long)
+                batch = batch.to(self.device)
+            
+                inf_start = time.time()
+                output = self.model(batch)
+                output.y = output.y.unsqueeze(-1)
+                output.x = output.x.reshape((self.batch_size*self.num_labels,1))
+                inf_end = time.time()
+                self.avg_inference_time += (inf_end-inf_start)
+                loss = self.loss_fn(output.x,output.y.float())
+                acc = self.get_acc(output.x,output.y.float())
+                self.avg_train_acc += acc
+                self.avg_train_loss +=loss.item()
+                print("======== Trainin Loss: ",loss.item()," ==========")
+                loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad(set_to_none=True)
+                b+=1
 
             self.avg_train_acc /= len(self.train_loader)
             self.avg_train_loss /= len(self.train_loader)
@@ -158,12 +139,16 @@ class Pipeline():
             self.training_acc.append(self.avg_train_acc )
             self.avg_inference_time /= len(self.train_loader)
             with torch.no_grad():
-                for batch in (self.val_loader):
+                for batch in tqdm(self.val_loader):
+                    if batch.x.shape[0] > self.node_limit or batch.x.shape[0] <=0 or batch.y.shape[0]!=self.batch_size*self.num_labels or batch.batch[-1]+1!=self.batch_size:
+                        continue
                     output = self.model(batch)
                     output.y = output.y.unsqueeze(-1)
+                    output.x = output.x.reshape((self.batch_size*self.num_labels,1))
                     loss = self.loss_fn(output.x,output.y.float())
                     self.avg_val_acc += self.get_acc(output.x,output.y.float())
                     self.avg_val_loss += loss.item()
+                    print("======== Validation Loss: ",loss.item()," ==========")
                 self.avg_val_acc /= len(self.val_loader)
                 self.avg_val_loss /= len(self.val_loader)
                 self.val_loss.append(self.avg_val_loss) 
@@ -314,7 +299,9 @@ if __name__ == "__main__":
 
     training_params = {
         'name':'DeepGNN',
-        'batch_size':8,
+        'num_labels':2048,
+        'node_limit':500,
+        'batch_size':2,
         'epochs':10,
         'learning_rate':1e-04,
         'loss_fn':'bceloss', #BCELoss, MCLoss, HCLLoss

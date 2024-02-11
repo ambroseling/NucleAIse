@@ -302,7 +302,6 @@ class CompleteGNNDataset(InMemoryDataset):
         # print("Batch num: ",batch_num)
         data, slices = torch.load('nucleaise/models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=batch_num))
         # print(type(data))
-        print(data)
         go_encoding = [0] * 2048
         for go_tensor in data['y'][slices['y'][offset]:slices['y'][offset+1]]:
             go = "GO:" + str(go_tensor.item()).zfill(7)

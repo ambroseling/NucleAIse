@@ -71,6 +71,7 @@ class GNN(nn.Module):
             else:
                 data = layer(data)
         data.x = self.aggr(data.x,data.batch)
+
         self.mapping.to(data.x.device)
         data = self.mapping(data)
 
