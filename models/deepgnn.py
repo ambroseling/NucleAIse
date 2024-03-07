@@ -1,83 +1,79 @@
 import torch.nn as nn
-from layers.blocks import GNNBlock, MultiHeadAttentionBlock,ResidueToGOMappingBlock,GOBlock,FeedForward
-from utils.go_graph_generation import generate_go_graph
+from layers.blocks import GNNBlock,GOBlock,ResidualNetwork, SelfAttention,CrossAttention
 from torch_geometric.nn import aggr
 from torch_geometric.data import Data,Batch
 import torch_geometric.nn.functional as F
+import torch
 
 
-
-class GNN(nn.Module):
-    def __init__(self,params,**kwargs):
+class Model(nn.Module):
+    def __init__(self,args,**kwargs):
         super().__init__()
-        self.num_blocks = params['num_blocks']
-        self.norm = params['norm']
-        self.channels = params['channels']
-        self.mapping_units = params['mapping_units']
-        self.type = params['type']
-        self.gnn_act = params['gnn_act']
-        if params['fc_act'] == 'relu':
-            self.fc_act = nn.ReLU()
-        elif params['fc_act']=='elu':
-            self.fc_act = nn.ELU()
-        
-        self.classifier = params['classifier']
+        self.num_blocks = args.num_blocks
+        self.channels = args.channels
         self.blocks = []
-        self.attention_heads = params['attention_heads']
-        self.cross_attention = params['cross_attention']
-        self.go_units = params['go_units']
-        self.go_dim = None
+        self.attention_heads = args.attention_heads
+        self.cross_attention = args.cross_attention
         #self.num_go_labels, self.go_edge_index,self.go_to_index_map,self.index_to_go_map = generate_go_graph(params["go_list"])
-        self.go_edge_index = None
-        self.num_go_labels = params['num_go_labels']
+        self.num_go_labels = args.num_labels
+        self.num_taxo = args.num_taxo
+        self.go_units = args.go_units
+        self.cls_emb = args.cls_emb
         for i in range(self.num_blocks-1):
-            self.blocks.append(GNNBlock(self.channels[i], self.channels[i+1],"GCN",params=params))
+            self.blocks.append(GNNBlock(self.channels[i], self.channels[i+1],"GCN",args))
             self.blocks.append(nn.LayerNorm(self.channels[i+1]))
-            self.blocks.append(MultiHeadAttentionBlock(self.attention_heads, self.channels[i+1], self.channels[i+1]//self.attention_heads, self.channels[i+1]//self.attention_heads, self.channels[i+1]//self.attention_heads,False,0.5))
+            self.blocks.append(SelfAttention(self.attention_heads, self.channels[i+1]))
+            self.blocks.append(SelfAttention(self.attention_heads, self.channels[i+1]))
+            if self.cross_attention:
+                self.blocks.append(CrossAttention(self.attention_heads, self.channels[i+1]))
             self.blocks.append(nn.LayerNorm(self.channels[i+1]))
         self.blocks = nn.Sequential(*self.blocks)
-
-        if params['aggr_type'] == "mean":
+        if args.aggr_type == "mean":
             self.aggr = aggr.MeanAggregation()
-        elif params['aggr_type'] == "max":
+        elif args.aggr_type == "max":
             self.aggr = aggr.MedianAggregation()
-        elif params['aggr_type'] == "sum":
+        elif args.aggr_type == "sum":
             self.aggr = aggr.SumAggregation()
 
-        self.mapping = ResidueToGOMappingBlock(self.num_go_labels,self.mapping_units,"mean","relu",params=params)
-        if self.go_units is not None:
-            self.go_block = GOBlock(self.num_go_labels, self.go_edge_index,self.go_units,go_processing_type="MLP",params=params,kwargs=kwargs)
-        
-        
-    def forward(self,data,*args):
 
-         # data.x shape is (total_nodes,node_dim)
-        # print("reached here before layer blocks!")
+        self.tax_emb = nn.Embedding(args.num_taxo, args.hidden_state_dim)
+        self.residual_block = ResidualNetwork(args.channels[-1],args.step_dim)
+        self.go_block = GOBlock(self.num_go_labels,self.go_units,go_processing_type="DAGNN",args=args,kwargs=kwargs)
+        
+        
+    def forward(self,data,go_edge_index):
+        if isinstance(data.x,tuple):
+            x = data.x[0]
+            tax = data.x[1]
+            tax = F.one_hot(tax,num_classes=self.num_taxo)
+            tax_emb = self.tax_emb(tax)
+            tax_emb = tax_emb[data.batch]
+            # data.x shape is (total_nodes,node_dim)
+            x = tax_emb + x
+        else:
+            x = data.x
         for layer in self.blocks:
             if isinstance(layer,nn.LayerNorm):
-                x = data.x
-                #print("before layernorm")
                 x = layer(x)
-                #print("after layernorm")
                 data.x = x
-            elif isinstance(layer,MultiHeadAttentionBlock):
-                if self.cross_attention:
-                    
-                    data = layer(data,data)
-                else:
-                    
-                    data = layer(data)
-
+            elif isinstance(layer,SelfAttention):
+                data = layer(data)
+                x = data.x
             else:
                 data = layer(data)
-        data.x = self.aggr(data.x,data.batch)
+                x = data.x
 
-        self.mapping.to(data.x.device)
-        data = self.mapping(data)
+        if self.cls_emb == "graph_cls":
+            batch = data.batch
+            x = data.x
+            unique_graphs = torch.unique(batch)
+            first_nodes = torch.tensor([torch.where(batch == g)[0][0] for g in unique_graphs])
+            x = x[first_nodes]
+            #extract the first node from each graph
+        elif self.cls_emb == "aggr":
+            data.x = self.aggr(data.x,data.batch)
 
-        #print("reached here before go block!")
-        if self.go_units is not None:
-            self.go_block.to(data.x.device)
-            data = self.go_block(data)
+        data = self.residual_block(data)
+        # data = self.go_block(data,go_edge_index)
 
         return data

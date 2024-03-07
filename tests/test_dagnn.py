@@ -19,7 +19,6 @@ from string import punctuation
 from scipy.spatial import distance
 import scipy
 import numpy as np
-from dagnn import DAGNN
 import time
 from tqdm import tqdm
 import scipy.sparse
@@ -33,98 +32,92 @@ from torch import Tensor
 from torch_geometric.typing import OptTensor
 N = 6 #number of nodes
 F = 2  #number of input node features
+torch.manual_seed(10)
+# def top_sort(edge_index, graph_size):
 
-def top_sort(edge_index, graph_size):
+#     node_ids = numpy.arange(graph_size, dtype=int)
 
-    node_ids = numpy.arange(graph_size, dtype=int)
+#     node_order = numpy.zeros(graph_size, dtype=int)
+#     unevaluated_nodes = numpy.ones(graph_size, dtype=bool)
 
-    node_order = numpy.zeros(graph_size, dtype=int)
-    unevaluated_nodes = numpy.ones(graph_size, dtype=bool)
+#     parent_nodes = edge_index[0]
+#     child_nodes = edge_index[1]
 
-    parent_nodes = edge_index[0]
-    child_nodes = edge_index[1]
-
-    n = 0
-    while unevaluated_nodes.any(): #keep looping if any node is still unevaluated, if any entry is True
-        #print("ITERATION ",n)
-        # Find which parent nodes have not been evaluated
-        unevaluated_mask = unevaluated_nodes[parent_nodes]
-        #print("unevaluated mask: ",unevaluated_mask)
-        # Find the child nodes of unevaluated parents
-        unready_children = child_nodes[unevaluated_mask]
-        #print("unready children: ",unready_children)
-        # Mark nodes that have not yet been evaluated
-        # and which are not in the list of children with unevaluated parent nodes
-        nodes_to_evaluate = unevaluated_nodes & ~numpy.isin(node_ids, unready_children)
-        #print("~numpyisin: ",~numpy.isin(node_ids, unready_children))
-        #print("nodes_to_eval: ",nodes_to_evaluate)
-        node_order[nodes_to_evaluate] = n
-        #print("node_order: ",node_order)
-        unevaluated_nodes[nodes_to_evaluate] = False
-        #print("unevaluated nodes: ",unevaluated_nodes)
-        n += 1
+#     n = 0
+#     while unevaluated_nodes.any(): #keep looping if any node is still unevaluated, if any entry is True
+#         #print("ITERATION ",n)
+#         # Find which parent nodes have not been evaluated
+#         unevaluated_mask = unevaluated_nodes[parent_nodes]
+#         #print("unevaluated mask: ",unevaluated_mask)
+#         # Find the child nodes of unevaluated parents
+#         unready_children = child_nodes[unevaluated_mask]
+#         #print("unready children: ",unready_children)
+#         # Mark nodes that have not yet been evaluated
+#         # and which are not in the list of children with unevaluated parent nodes
+#         nodes_to_evaluate = unevaluated_nodes & ~numpy.isin(node_ids, unready_children)
+#         #print("~numpyisin: ",~numpy.isin(node_ids, unready_children))
+#         #print("nodes_to_eval: ",nodes_to_evaluate)
+#         node_order[nodes_to_evaluate] = n
+#         #print("node_order: ",node_order)
+#         unevaluated_nodes[nodes_to_evaluate] = False
+#         #print("unevaluated nodes: ",unevaluated_nodes)
+#         n += 1
     
-    return torch.from_numpy(node_order).long()
+#     return torch.from_numpy(node_order).long()
 
 
-def add_order_info(edge_index,num_nodes):
-    layer0 = top_sort(edge_index,num_nodes)
-    print("Done topsort for forward layer")
-    ei2 = torch.LongTensor([list(edge_index[1]),list(edge_index[0])])
-    layer1 =  top_sort(ei2,num_nodes)
-    print("Done topsort for reverse layer")
-    ns = torch.LongTensor([i for i in range(num_nodes)])
-    return layer0,layer1, ns
+# def add_order_info(edge_index,num_nodes):
+#     layer0 = top_sort(edge_index,num_nodes)
+#     print("Done topsort for forward layer")
+#     ei2 = torch.LongTensor([list(edge_index[1]),list(edge_index[0])])
+#     layer1 =  top_sort(ei2,num_nodes)
+#     print("Done topsort for reverse layer")
+#     ns = torch.LongTensor([i for i in range(num_nodes)])
+#     return layer0,layer1, ns
 
 
 
 
-edge_index = np.array([[1,3,0,2,2],[0,0,2,4,5]])
 # node_order = top_sort(edge_index,5)
 # print("Node order: ",node_order)
 # graph_size = 7
 
-bilayer_idx0,bilayer_idx1,bilayer = add_order_info(edge_index, 6)
+# bilayer_idx0,bilayer_idx1,bilayer = add_order_info(edge_index, 6)
 
-bi_layer_index = torch.stack([
-            torch.stack([bilayer_idx0, bilayer], dim=0),
-            torch.stack([bilayer_idx1, bilayer], dim=0)], dim=0)
+# bi_layer_index = torch.stack([
+#             torch.stack([bilayer_idx0, bilayer], dim=0),
+#             torch.stack([bilayer_idx1, bilayer], dim=0)], dim=0)
 
-print("bilayer: ",bi_layer_index.shape)
-num_layers_batch = max(bi_layer_index[0][0]).item() + 1
+# print("bilayer: ",bi_layer_index.shape)
+# num_layers_batch = max(bi_layer_index[0][0]).item() + 1
+
+# edge_index = torch.tensor([[1,3,0,2,2],[0,0,2,4,5]])
+
+# print("num_layers_batch: ",num_layers_batch)
+# print("bi_layer_index[d][0]: ",bi_layer_index[0][0]==0) #basically get a mask of the nodes that belong to that layer
+# layer = bi_layer_index[0][0]==0
+# layer = bi_layer_index[0][1][layer] #basically gets the node indices of that layer
+
+# print("layer: ",layer)
+
+
+# #this section only happens after l_idx >0 meaning after the first layer in the tree
+# le_idx = []
+# for n in layer:
+#     ne_idx = edge_index[1] == n
+#     le_idx += [ne_idx.nonzero().squeeze(-1)]
+    
+# le_idx = torch.cat(le_idx, dim=-1)
+# print("leidx: ",le_idx)
+# lp_edge_index = edge_index[:, le_idx]
+# print("lp_edge_index: ",lp_edge_index)
+
+
 
 edge_index = torch.tensor([[1,3,0,2,2],[0,0,2,4,5]])
-
-print("num_layers_batch: ",num_layers_batch)
-print("bi_layer_index[d][0]: ",bi_layer_index[0][0]==0) #basically get a mask of the nodes that belong to that layer
-layer = bi_layer_index[0][0]==0
-layer = bi_layer_index[0][1][layer] #basically gets the node indices of that layer
-
-print("layer: ",layer)
-
-
-#this section only happens after l_idx >0 meaning after the first layer in the tree
-le_idx = []
-for n in layer:
-    ne_idx = edge_index[1] == n
-    le_idx += [ne_idx.nonzero().squeeze(-1)]
-    
-le_idx = torch.cat(le_idx, dim=-1)
-print("leidx: ",le_idx)
-lp_edge_index = edge_index[:, le_idx]
-print("lp_edge_index: ",lp_edge_index)
-
-
-
-
 torch.manual_seed(10)
 H = torch.rand(N,F)
 num_nodes_batch = H.shape[0]
-h = [[torch.zeros(num_nodes_batch, 3)
-                for _ in range(2)] for _ in range(2)]
-
-print("Hidden state: ",h)
-print(H)
 g = Data(x=H,edge_index = edge_index)
 
 class AttnConv(MessagePassing):
@@ -152,6 +145,8 @@ class AttnConv(MessagePassing):
 
         # so h_attn_q_i is the node features of the query nodes for each edge (num_of_edges, query_node_dim)
         #    h_attn_j   is the node features of the target nodes for each edge (num_of_edges, target_node_dim)
+        print("h_attn_j:")
+        print(h_attn_j)
         h_attn = h_attn_j if h_attn_j is not None else h_j
         h_attn = h_attn + edge_attr if self.wea else h_attn
         # we concatenate query node features with target node features  so you get (num_of_edges, query_node_dim+target_node_dim)
@@ -161,11 +156,13 @@ class AttnConv(MessagePassing):
 
         a_j = softmax(a_j, index, ptr, size_i) #normalize
 
+        print("h_j:",h_j)
         t = h_j * a_j # apply the attention score on the target nodes
-
         return t
 
     def update(self, aggr_out):
+        #this is after aggregation for each node
+        #aggr out contains the updated node features after aggregating messages from all the neighbouring nodes (source nodes from the edge index)
         print('agg out: ',aggr_out)
         return aggr_out
 

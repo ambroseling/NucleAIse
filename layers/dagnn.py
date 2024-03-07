@@ -2,16 +2,51 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric as tg
+import numpy as np
 from torch_geometric.nn.glob import *
 from torch_geometric.nn.inits import uniform, glorot
 from torch_geometric.nn import MessagePassing
-
+from torch_geometric.data import Data,Batch
 from typing import Optional
 from torch import Tensor
 from torch_geometric.typing import OptTensor
 from torch_geometric.utils import softmax
 
 # This is code from DAGNN paper https://arxiv.org/pdf/2101.07965.pdf
+def topsort(edge_index,graph_size):
+    node_ids = np.arange(graph_size,dtype=int)
+    node_order = np.zeros(graph_size,dtype=int)
+    unevaluated_nodes = np.ones(graph_size,dtype=bool)
+    parent_nodes = edge_index[0]
+    child_nodes = edge_index[1]
+    n = 0
+    while unevaluated_nodes.any():
+        unevaluated_mask = unevaluated_nodes[parent_nodes]
+        unready_children = child_nodes[unevaluated_mask]
+        nodes_to_evaluate = unevaluated_nodes & ~np.isin(node_ids,unready_children)
+        node_order[nodes_to_evaluate] = n
+        unevaluated_nodes[nodes_to_evaluate] = False
+        n+=1
+    return torch.from_numpy(node_order).long()
+
+def add_order_info(graph,num_nodes):
+    layer0 = topsort(graph.edge_index,num_nodes)
+    print("Done topsort for forward layer")
+    print(layer0)
+    # for i in range(0,18):
+    #     print(f"Num of nodes in layer {i}")
+    #     print(torch.sum(layer0 == i).item())
+    ei2 = torch.LongTensor([list(graph.edge_index[1]),list(graph.edge_index[0])])
+    layer1 =  topsort(ei2,graph.num_nodes)
+    print("Done topsort for reverse layer")
+    print(layer1)
+    ns = torch.LongTensor([i for i in range(graph.num_nodes)])
+    print("ns: ",ns)
+    graph.__setattr__("_bi_layer_idx0", layer0)
+    graph.__setattr__("_bi_layer_index0", ns)
+    graph.__setattr__("_bi_layer_idx1", layer1)
+    graph.__setattr__("_bi_layer_index1", ns)
+
 
 class DAGNN(nn.Module):
 
@@ -86,7 +121,7 @@ class DAGNN(nn.Module):
                 self.__setattr__("cells_{}".format(i), nn.ModuleList(
                     #first layer is embed_dim,hidden_dim other layers are hidden_dim,hidden_dim, looped for num_layers
                     [nn.GRUCell(emb_dim if l == 0 else self.hidden_dim, self.hidden_dim) for l in range(num_layers)]))
-            print("Forward direction GRU: ",self.__getattr__("cells_{}".format(0)))
+            # print("Forward direction GRU: ",self.__getattr__("cells_{}".format(0)))
         else:
             for i in self.dirs: # loop through all directions (2)
                 self.__setattr__("cells_{}".format(i), nn.ModuleList(
@@ -103,6 +138,12 @@ class DAGNN(nn.Module):
 
         # output
         # self.out_norm = nn.LayerNorm(self.out_hidden_dim)
+ 
+        self.final_linear_1 = nn.Linear(self.hidden_dim*(num_layers+2)+self.emb_dim,self.hidden_dim//2)
+        self.final_linear_2 = nn.Linear(self.hidden_dim//2,self.hidden_dim//4)
+        self.final_linear_3 = nn.Linear(self.hidden_dim//4,1)
+        self.final_activation = nn.SiLU()
+        self.output_activation = nn.Sigmoid()
         self.dropout = nn.Dropout(dropout)
         # self.out_linear = torch.nn.Linear(self.out_hidden_dim, out_dim)
         # self.activation = init_activation(activation, out_dim)
@@ -142,114 +183,122 @@ class DAGNN(nn.Module):
             torch.stack([G._bi_layer_idx0, G._bi_layer_index0], dim=0),
             torch.stack([G._bi_layer_idx1, G._bi_layer_index1], dim=0)
         ], dim=0)
-
+        # print("bi_layer_index:")
+        # print(G.bi_layer_index)
         device = G.x.device
         num_nodes_batch = G.x.shape[0] #how many nodes are in this batch
         num_layers_batch = max(G.bi_layer_index[0][0]).item() + 1 #how many layers are there in this batch
 
         G.x = G.x # input feature matrix
-
         G.h = [[torch.zeros(num_nodes_batch, self.hidden_dim).to(device)
                 for _ in self.__getattr__("cells_{}".format(0))] for _ in self.dirs]
-        print(f"G.h: {len(G.h) }x{len(G.h[0])}x{G.h[0][0].shape}")
+        # print("self.__getattr__(cell_0).format(0)):")
+        # print(self.__getattr__("cells_{}".format(0))[0][0])
+        # print("G.h")
+        # print(G.h)
         # loop both directions
         for d in self.dirs:
             #loop through all layers
-            print("NUM LAYERS BATCH: ",num_layers_batch)
             for l_idx in range(num_layers_batch):
-                print("\n\nLAYER IDX: ",l_idx)
 
                 layer = G.bi_layer_index[d][0] == l_idx
                 layer = G.bi_layer_index[d][1][layer]#get all the nodes that belong to this layer
 
+                # print(G.x.shape)
+                # print(layer)
                 inp = G.x[layer] #gets all the node features of the nodes that belong to this layer
-
+                # print("Inp:")
+                # print(inp)
+                # print(f"----- PROCESSING layer {l_idx} ----")
                 if l_idx > 0:  # no predecessors at first layer
                     le_idx = []
                     for n in layer: #loop through all the nodes in the layer
                         ne_idx = G.edge_index[1-d] == n
                         le_idx += [ne_idx.nonzero().squeeze(-1)]
+                    
                     le_idx = torch.cat(le_idx, dim=-1)
+
                     lp_edge_index = G.edge_index[:, le_idx] #this basically gets all the edges where the target nodes are the nodes of this layer
-                    print("lp_edge_index: ",lp_edge_index.shape)
+                    
+                    # print("lp_edge_index: ")
+                    # print(lp_edge_index)
+                    # we basically aggregate the messages from the previous layer in our node tree and aggregate into the node feautres of the current layer
+                   # cuz we aggregate and then pick out nodes of the current layer
                     if self.agg_x:
                         # it wouldn't make sense to perform attention based on h when aggregating x... so no h needed
                         kwargs = {"h_attn": G.x, "h_attn_q": G.x} if self.agg_attn else {}  # just ignore query arg if self attn
                         node_agg = self.__getattr__("node_aggr_{}".format(d))[0]
-                        print('G.x shape: ',G.x.shape)
+                        # print('G.x shape: ',G.x.shape)
+                        # print("G.x:",G.x)
                         ps_h = node_agg(G.x, lp_edge_index, edge_attr=None, **kwargs)[layer]
+                        # print("ps_h: ")
+                        # print(ps_h)
                         # if we aggregate x...
                         s = ps_h.shape
+                        # print("ps_h shape:",s)
+                        # print(s)
                         if s[-1] < self.hidden_dim:
                             ps_h = torch.cat([ps_h, torch.zeros(s[0], self.hidden_dim-s[1])], dim=-1)
                         # print(G.x[lp_idx])
                         # print(ps_h)
 
                 #loop through all the GRU cells for a certain direction
-                print("CELL LENGTH: ",len(self.__getattr__("cells_{}".format(d))))
+                # print("self.recurr: ",self.recurr)
+                # print(f"==== GRU Section of layer: {l_idx}====")
                 for i, cell in enumerate(self.__getattr__("cells_{}".format(d))):
-                    print("\nCELL ",i)
                     if l_idx == 0: #if its the first layer of the tree
                         ps_h = None if self.recurr else torch.zeros(inp.shape[0], self.hidden_dim).to(device)
                     elif not self.agg_x: #not the first layer
+                        # print("not self aggx")
                         kwargs = {} if not self.agg_attn else \
                                     {"h_attn": G.x, "h_attn_q": G.x} if self.agg_attn_x else \
                                     {"h_attn": G.h[d][i], "h_attn_q": G.h[d][i-1] if i > 0 else G.x}  # just ignore query arg if self attn
-                        print("self.agg_attn: ",self.agg_attn)
-                        print("self.agg_attn_x: ",self.agg_attn_x)
+                        # print("self.agg_attn: ",self.agg_attn)
+                        # print("self.agg_attn_x: ",self.agg_attn_x)
                         node_agg = self.__getattr__("node_aggr_{}".format(d))[i]
                         #G.h[d][i] predecessor hidden states
+                        # print("G.h:")
+                        # print(G.h)
                         ps_h = node_agg(G.h[d][i], lp_edge_index, edge_attr=None, **kwargs)[layer] #index to get the output node features of the nodes in the current layer of the tree
-                        print("PS_H SHAPE: ",ps_h.shape)
+                        # print("PS_H SHAPE: ",ps_h.shape)
                         #ps_h is aggregated node states of 
                     #forward input through GRU cell
+                    # print("ps_h: ",ps_h)
+                    # print("inp: ",inp)
                     inp = cell(inp, ps_h) if self.recurr else cell(torch.cat([inp, ps_h], dim=1))
-                    print("INPUT: ",inp.shape)
+                    # if i == 1:
+                        # print("ps_h: ",ps_h)
+                        # print("inp: ",inp)
                     G.h[d][i][layer] += inp
         #if both directions and dont output all
         if self.bidirectional and not self.output_all:
             #get index from output_nodes
             index = self._get_output_nodes(G)
-            print("index: ")
-            print(index)
+            # print(index)
             h0 = torch.cat([G.x] + [G.h[0][l] for l in range(self.num_layers)], dim=-1) if self.out_wx else \
                 torch.cat([G.h[0][l] for l in range(self.num_layers)], dim=-1)
-            print("h0: ",h0.shape)
-            print("h0[index]: ",h0[index].shape)
-            #out0 = self._readout(h0[index], G.batch[index])
-            #index = self._get_output_nodes(G, reverse=1)
+
+            out0 = self._readout(h0[index], G.batch[index])
+            index = self._get_output_nodes(G, reverse=1)
             h1 = torch.cat([G.x] + [G.h[1][l] for l in range(self.num_layers)], dim=-1) if self.out_wx else \
                 torch.cat([G.h[1][l] for l in range(self.num_layers)], dim=-1)
-            #out1 = self._readout(h1[index], G.batch[index])
-            #out = torch.cat([out0, out1], dim=-1)
-            print("OUTPUT",out)
-            #out = self.dropout(out)
+            out1 = self._readout(h1[index], G.batch[index])
+            out = torch.cat([out0, out1], dim=-1)
+            # print("OUTPUT",out)
+            out = self.dropout(out)
         else:
             G.h = torch.cat([G.x] + [G.h[d][l] for d in self.dirs for l in range(self.num_layers)], dim=-1) if self.out_wx else torch.cat([G.h[d][l] for d in self.dirs for l in range(self.num_layers)], dim=-1) if self.bidirectional else torch.cat([G.h[0][l] for l in range(self.num_layers)], dim=-1)
             # 1)concat x with h in both directios from each layer
              #2) concat h in both directions from each layer
              #3) only 1 direction, no weight x
-
-            if not self.output_all:
-                index = self._get_output_nodes(G)
-                G.h, G.batch = G.h[index], G.batch[index]
-            out = self._readout(G.h, G.batch)
-
-        # out = self.out_linear(out)  #self.out_norm(out)
-        #out = self.dropout(out)
-        # return self.activation(out).squeeze(-1)
+        out = self.dropout(G.h)
+        out = self.final_activation(self.final_linear_1(G.h))
+        out = self.final_activation(self.final_linear_2(out))
+        out = self.final_linear_3(out)
+        out = self.output_activation(out)
+        return out
+        
         # return out
-
-        # if self.num_class > 0:
-        #     return self.graph_pred_linear(out)
-
-        # pred_list = []
-        # for i in range(self.max_seq_len):
-        #     pred_list.append(self.graph_pred_linear_list[i](out))
-        # return pred_list
-
-
-
 
 
 def init_encoder(word_vectors, emb_dim):
@@ -395,9 +444,7 @@ class AttnConv(MessagePassing):
             self.wea = False
         #2100 x 1
         self.attn_lin = nn.Linear(attn_q_dim + attn_dim, 1)
-        print("=============")
-        print('attn_q_dim: ',attn_q_dim)
-        print('attn_dim: ',attn_dim)
+
     # h_attn_q is needed; h_attn, edge_attr are optional (we just use kwargs to be able to switch node aggregator above)
     def forward(self, h, edge_index, h_attn_q=None, edge_attr=None, h_attn=None, **kwargs):
         edge_embedding = self.edge_encoder(edge_attr) if self.wea else None
@@ -448,3 +495,24 @@ class MultAttnConv(MessagePassing):
     def update(self, aggr_out):
         return aggr_out
 
+if __name__ == "__main__":
+    N = 6 #number of nodes
+    F = 2  #number of input node features
+    torch.manual_seed(10)
+    edge_index = torch.tensor([[1,3,0,2,2],[0,0,2,4,5]])
+    torch.manual_seed(10)
+    H = torch.rand(N,F)
+    g = Data(x=H,edge_index = edge_index)
+    add_order_info(g)
+    H = torch.rand(N,F)
+    edge_index = torch.tensor([[0,0,1,1,2],[1,2,3,4,5]])
+    p = Data(x = H,edge_index = edge_index)
+    add_order_info(p)
+    batch = Batch.from_data_list([g,p])
+    add_order_info(batch)
+
+    print(batch)
+    model = DAGNN(num_vocab=0,max_seq_len=0,w_edge_attr=False,emb_dim=2,hidden_dim=2,out_dim=2,num_rels=1,num_layers=2,
+bidirectional=True,mapper_bias=True,agg_x=False,agg = "attn_h",out_wx=True,out_pool_all=True,out_pool ="max",encoder=None,dropout=0.0,word_vectors=None,emb_dims=[],activation=None,num_class=0,recurr=1)
+    out = model(batch)
+    print(out)

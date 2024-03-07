@@ -85,10 +85,8 @@ def get_t5(data):
 
     with torch.no_grad():
         embedding_repr = model(input_ids=input_ids, attention_mask=attention_mask)
-    # For feature extraction we recommend to use the encoder embedding
+    print(embedding_repr.last_hidden_state.shape)
     emb = embedding_repr.last_hidden_state[0,:len(data[0][1])]
-    print('==== T5 shape: ====')
-    print(emb.shape)
     return emb
 
 
