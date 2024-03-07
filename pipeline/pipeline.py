@@ -1,48 +1,52 @@
+import sys
+import os
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))
 import torch
 import numpy as np 
 import torch.nn as nn
 import math
-
+import argparse
+import json
 import time
+import asyncio
+import threading
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.pyplot as plt
-import sys
-from pathlib import Path
+import asyncpg
 from torch.profiler import profile, record_function, ProfilerActivity
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from models.gnn.preprocess_gnn import load_gnn_data
-from models.deepgnn import GNN
-from models.gnn.preprocess_gnn import load_completed_gnn_datasets
-from utils.go_graph_generation import generate_go_graph
-from utils.go_graph_generation import get_go_list_from_data
+import threading
+from models.deepgnn import Model
+from preprocessing.data_factory import ProteinDataset
+# from utils.go_graph_generation import generate_go_graph
+# from utils.go_graph_generation import get_go_list_from_data
 from torch_geometric.data import Data,Batch
 import torch_geometric
 import torch.nn as nn
 import math
+import esm
+from transformers import BertModel, BertTokenizer
+from transformers import T5Tokenizer, T5Model,T5EncoderModel
+
+
 PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7
 
 class Pipeline():
-    def __init__(self,training_params,model):
+    def __init__(self,model,args):
         super(Pipeline,self).__init__()
         #model
-        self.model_name = training_params['name']
+
+        self.model_name = args.model_name
         self.model = model
         self.model_size = 0
-        self.device = training_params['device']
+        self.device = args.device
         #hyper param
-        self.epoch = training_params['epochs']
-        self.learning_rate = training_params['learning_rate']
-        self.batch_size = training_params['batch_size']
-        self.num_labels = training_params['num_labels']
-        self.node_limit = training_params['node_limit']
-        #data parameters
-
-        #loaders
-        self.train_loader = None
-        self.val_loader = None
-        self.test_loader = None
+        self.epoch = args.epochs
+        self.learning_rate = args.learning_rate
+        self.batch_size = args.batch_size
+        self.num_train_steps = args.num_train_steps
+        self.num_labels = args.num_labels
 
         #training metrics
         self.training_loss = []
@@ -69,19 +73,70 @@ class Pipeline():
         
 
         #loss fn & optimizer
-        loss_type = training_params['loss_fn']
-        if loss_type == 'bceloss':
-            self.loss_fn = nn.BCEWithLogitsLoss()
-        elif loss_type == 'hclloss':
-            pass
-        elif loss_type == 'mcloss':
-            pass
-        
+        self.loss_fn = nn.BCEWithLogitsLoss()
+
+
+        #data variabels
+        self.index_to_taxo = {}
+        self.taxo_to_index = {}
+        self.go_to_index = {}
+        self.index_to_go = {}
+        self.go_edge_index = None
+        self.ontology = args.ontology
+        self.node_limit = args.node_limit
+        self.args = args
+
     def count_parameters(self,model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+
+    def load_taxonomy(self):
+        if os.path.exists('index_to_taxonomy.json') and os.path.exists('taxonomy_to_index.json'):
+            with open('index_to_taxonomy.json') as json_file:
+                self.index_to_taxo = json.loads(json_file)
+            with open('taxonomy_to_index.json') as json_file:
+                self.index_to_taxo = json.loads(json_file)
+
+    def load_goa(self):
+        goa = torch.load(f'./pipeline/config/{self.ontology}_go.pt')
+        self.go_set = goa['go_set']
+        self.go_edge_index = goa[f'{self.ontology}_edge_index']
+        self.go_to_index = goa[f'{self.ontology}_go_to_index']
+        self.index_to_go = goa[f'{self.ontology}_index_to_go']
+
+
     def load_data(self):
-        self.train_loader,self.val_loader,self.test_loader = load_completed_gnn_datasets(batch_size=self.batch_size)
+        async def create_pool():
+            pool = await asyncpg.create_pool(
+                database="nucleaise",
+                user="postgres",
+                password="ambrose1015",  # Add password if required
+                host="localhost",          # Add host address if not running locally
+                port="5432",          # Add port number if not using default port
+                setup=setup_connection,    # Optionally, you can include setup function
+                min_size=32,
+                max_size=32
+            )
+            return pool
+
+        async def setup_connection(connection):
+            await connection.execute("set search_path to public")
+
+        loop = asyncio.get_event_loop()
+        # create an asyncio loop that runs in the background to
+        # serve our asyncio needs
+        threading.Thread(target=loop.run_forever, daemon=True).start()
+
+        pool = asyncio.run_coroutine_threadsafe(create_pool(), loop=loop).result()
+        tokenizer = T5Tokenizer.from_pretrained('Rostlab/prot_t5_xl_half_uniref50-enc', do_lower_case=False)
+        t5_model = T5EncoderModel.from_pretrained("Rostlab/prot_t5_xl_half_uniref50-enc")
+        esm_model, esm_alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+        self.load_taxonomy()
+        goa = self.load_goa()
+        taxo_to_index = self.taxo_to_index
+        self.training_dataset = ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,goa,self.args)
+        self.validation_dataset =  ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,goa,self.args)
+        
         print("###############DATA LOADING SUCCESS###############")
 
         print("\n")
@@ -96,21 +151,16 @@ class Pipeline():
         for epoch in range(self.epoch):
 
             epoch_start = time.time()
-            self.avg_train_loss = 0.0
-            self.avg_val_loss = 0.0
-            self.avg_train_acc = 0.0
-            self.avg_val_acc = 0.0
+            # self.avg_train_loss = 0.0
+            # self.avg_val_loss = 0.0
+            # self.avg_train_acc = 0.0
+            # self.avg_val_acc = 0.0
             b = 0
-            num_batches = len(self.train_loader)
-
-            # with profile(activities=[ProfilerActivity.CPU], profile_memory=True,with_stack=True, record_shapes=True) as prof:
-            #     with record_function("model_inference"):
-
-
-            for batch in tqdm(self.train_loader):
-                if batch.x.shape[0] > self.node_limit or batch.x.shape[0] <=0 or batch.y.shape[0]!=self.batch_size*self.num_labels or batch.batch[-1]+1!=self.batch_size:
-                    continue
-                print(f"=== Processing batch {b} out of {num_batches} ===")
+           
+            for batch in self.training_dataset:
+                print(batch)
+                # if batch.x.shape[0] > self.node_limit or batch.x.shape[0] <=0 or batch.y.shape[0]!=self.batch_size*self.num_labels or batch.batch[-1]+1!=self.batch_size:
+                #     continue
                 batch.x = batch.x.type(torch.float32)
                 batch.y = batch.y.type(torch.float32)
                 batch.edge_attr = batch.edge_attr.type(torch.float32)
@@ -118,48 +168,44 @@ class Pipeline():
                 batch = batch.to(self.device)
             
                 inf_start = time.time()
-                output = self.model(batch)
-                output.y = output.y.unsqueeze(-1)
+                output = self.model(batch,self.go_edge_index)
+                output.y = output.y.unsqueeze(-1).view(self.batch_size*self.num_labels,1)
                 output.x = output.x.reshape((self.batch_size*self.num_labels,1))
                 inf_end = time.time()
-                self.avg_inference_time += (inf_end-inf_start)
+                print (f"Forward pass time: {inf_end-inf_start}")
                 loss = self.loss_fn(output.x,output.y.float())
                 acc = self.get_acc(output.x,output.y.float())
-                self.avg_train_acc += acc
-                self.avg_train_loss +=loss.item()
-                print("======== Trainin Loss: ",loss.item()," ==========")
                 loss.backward()
                 self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
                 b+=1
+                self.training_loss.append(loss.item())
+                self.training_acc.append(acc)
+                print(f"======== Trainin Loss: {loss.item()}  Training Accuracy: {acc} ==========")
 
-            self.avg_train_acc /= len(self.train_loader)
-            self.avg_train_loss /= len(self.train_loader)
-            self.training_loss.append(self.avg_train_loss )
-            self.training_acc.append(self.avg_train_acc )
-            self.avg_inference_time /= len(self.train_loader)
-            with torch.no_grad():
-                for batch in tqdm(self.val_loader):
-                    if batch.x.shape[0] > self.node_limit or batch.x.shape[0] <=0 or batch.y.shape[0]!=self.batch_size*self.num_labels or batch.batch[-1]+1!=self.batch_size:
-                        continue
-                    output = self.model(batch)
-                    output.y = output.y.unsqueeze(-1)
-                    output.x = output.x.reshape((self.batch_size*self.num_labels,1))
-                    loss = self.loss_fn(output.x,output.y.float())
-                    self.avg_val_acc += self.get_acc(output.x,output.y.float())
-                    self.avg_val_loss += loss.item()
-                    print("======== Validation Loss: ",loss.item()," ==========")
-                self.avg_val_acc /= len(self.val_loader)
-                self.avg_val_loss /= len(self.val_loader)
-                self.val_loss.append(self.avg_val_loss) 
-                self.val_acc.append(self.avg_val_acc)
-                if self.avg_val_loss < self.best_val_loss:
-                    self.best_val_loss = self.avg_val_loss
-                    self.best_epoch = epoch
+                # with torch.no_grad():
+                #     for batch in tqdm(self.val_loader):
+                #         if batch.x.shape[0] > self.node_limit or batch.x.shape[0] <=0 or batch.y.shape[0]!=self.batch_size*self.num_labels or batch.batch[-1]+1!=self.batch_size:
+                #             continue
+                #         output = self.model(batch)
+                #         output.y = output.y.unsqueeze(-1)
+                #         output.x = output.x.reshape((self.batch_size*self.num_labels,1))
+                #         loss = self.loss_fn(output.x,output.y.float())
+                #         self.avg_val_acc += self.get_acc(output.x,output.y.float())
+                #         self.avg_val_loss += loss.item()
+                #         print("======== Validation Loss: ",loss.item()," ==========")
+                #     self.avg_val_acc /= len(self.val_loader)
+                #     self.avg_val_loss /= len(self.val_loader)
+                #     self.val_loss.append(self.avg_val_loss) 
+                #     self.val_acc.append(self.avg_val_acc)
+                #     if self.avg_val_loss < self.best_val_loss:
+                #         self.best_val_loss = self.avg_val_loss
+                #         self.best_epoch = epoch
             #         self.best_path = f'../checkpoints/{self.model_name}_bs{self.batch_size}_lr{self.learning_rate}_win{self.seq_len}-{self.target_len}-{self.pred_len}_v{self.velocity}_sc{self.scale}_ep{epoch}.pth'
-            epoch_end = time.time()
-            epoch_time = epoch_end-epoch_start
-            self.save(epoch,self.model,self.avg_val_loss)
+            if b%100 == 0:
+                epoch_end = time.time()
+                epoch_time = epoch_end-epoch_start
+                self.save(epoch,self.model,self.avg_val_loss)
             self.avg_time_per_epoch += epoch_time/self.epoch
             print(f'===Epoch: {epoch} | Training Loss: {self.avg_train_loss:.3f} | Validation Loss: {self.avg_val_loss:.3f} | Training Acc: {self.avg_train_acc:.3f} | Validation Loss: {self.avg_val_acc:.3f} | Avg inference time: {self.avg_inference_time:.3f} | Time per epoch: {epoch_time:.3f}')
             
@@ -194,8 +240,10 @@ class Pipeline():
         return size_all_mb
 
     def get_acc(self,output,target):
+
         output = torch.where(output > 0.5, 1.0, 0.0)
-        acc = torch.sum(output==target) / torch.sum(target)
+
+        acc = torch.sum(output==target) / target.shape[0]
         return acc
     def get_recall(self,output,target):
         pass
@@ -204,22 +252,6 @@ class Pipeline():
     def get_f1(self,output,target):
         pass
 
-    def eval(self):
-        with torch.no_grad():
-            for batch in self.test_loader:
-                batch_y = torch.reshape(batch.y.float(),(self.batch_size,self.seq_len,self.num_features))
-                output = self.model(batch)
-                loss = self.loss_fn(output,batch_y.float().to(self.device))
-                acc = self.get_acc(output,batch_y.float())
-                self.avg_test_loss+=loss.item()
-                self.avg_test_acc+=acc
-            self.avg_test_loss /= len(self.test_loader)
-            self.avg_test_acc /= len(self.test_loader)
-        print("############### EVALUATION STAGE ###############")
-        print("Test Loss: ",self.avg_test_loss)
-        print("Test Accuracy: ",self.avg_test_acc)
-
-        return 
 
     def save(self,epoch,model,loss):
         torch.save({
@@ -248,68 +280,91 @@ class Pipeline():
         plt.savefig(f"../training_curves/{self.model_name}_bs{self.batch_size}_lr{self.learning_rate}_acc.png")
 
 
+def parser_args():
+    parser = argparse.ArgumentParser(description="Definition of all the arguments to this training script")
+    #Training arguments
+    parser.add_argument("--model_name",type=str,default="gnn_lm",help="name for the model")
+    parser.add_argument("--num_labels",type=int,default=10,help="The number of GO labels that we are considering")
+    parser.add_argument("--ontology",type=str,default="bp",choices=['bp','cc','mf'],help="The ontology we want to train with")
+    parser.add_argument("--node_limit",type=int,default=1024,help="The maximum amount of nodes we want to consider per batch")
+    parser.add_argument("--batch_size",type=int,default=2,help="training batch size")
+    parser.add_argument("--epochs",type=int,default=1,help="training batch size")
+    parser.add_argument("--num_train_steps",type=int,default=10000,help="training batch size")
+    parser.add_argument("--learning_rate",type=float,default=1e-4,help="training batch size")
+    parser.add_argument("--device",type=str,default='cpu',help="training batch size")
 
-
+    #Model parameters
+    parser.add_argument("--channels",type=list,default=[1280,1000,1024],help="training batch size")
+    parser.add_argument("--step_dim",type=list,default=[2,2,2,4],help="dimensions for the residual block")
+    parser.add_argument("--hidden_state_dim",type=int,default=1024,help="hidden state dimension of the intial embeddings")
+    parser.add_argument("--go_proccesing_type",type=str,default="DAGNN",)
+    parser.add_argument("--go_units",type=list,default=[50,100],help="training batch size")
+    parser.add_argument("--cross_attention",type=bool,default=False,help="cross_attention")
+    parser.add_argument("--attention_heads",type=int,default=4,help="the number of attention heads")
+    parser.add_argument("--num_taxo",type =int,default= 1000,help="the number of taxonomy classes we wish to consider")
+    parser.add_argument("--gnn_type",type=str,default="gcn",help="type of gnn used in message passing")
+    parser.add_argument("--norm_type",type=str,default="pairnorm",help="type of gnn used in message passing")
+    parser.add_argument("--aggr_type",type=str,default="mean",help="type of aggregation function used in message passing")
+    parser.add_argument("--num_blocks",type=int,default=3,help="number of blocks for the stage one gnn, should match length of channels")
+    parser.add_argument("--cls_emb",type=str,default="aggr",choices=["graph_cls","aggr"])
+    args = parser.parse_args()
+    return args
 
 
 if __name__ == "__main__":
-    # for i in range(1,196):
-    #     data,_ = torch.load('nucleaise/models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=i))
-
-    with open('nucleaise/go_set.txt','r') as file:
-        go_list = file.read().splitlines()
-    
-    model_params = {
-    'batch_size':1,
-    'num_go_labels':len(go_list),
-    'go_list':go_list,
-    'channels':[1024,512,256,64],
-    'mapping_units':[64,2048], #residual neural network
-    'go_units':None,
-    'egnn_dim':1024,
-    'fc_act':"relu",
-    'heads':4,
-    'concat':True,
-    'negative_slope':0.2,
-    'dropout_p':0,
-    'add_self_loops':False,
-    'edge_dim':None,
-    'fill_value':'mean',
-    'bias':False,
-    'improved':False,
-    'cached':False,
-    'bias':False,
-    'type':'GAT',
-    'aggr_type':'mean',
-    'gnn_act':'relu',
-    'num_blocks':4,
-    'residual_type':'Drive',
-    'attention_heads':4,
-    'cross_attention':False,
-    'classifier':False,
-    'norm':{
-    'norm_type':'PairNorm',
-    'norm_scale':1.0,
-    'norm_scale_individually':False,
-    'norm_eps':1e-05,
-    'norm_momentum:':0.1,
-    'norm_affine':True,
-    'norm_track_running_stats':True
-    }}
-
-    training_params = {
-        'name':'DeepGNN',
-        'num_labels':2048,
-        'node_limit':500,
-        'batch_size':2,
-        'epochs':10,
-        'learning_rate':1e-04,
-        'loss_fn':'bceloss', #BCELoss, MCLoss, HCLLoss
-        'device':'cpu'
-    }
-    model = GNN(model_params,type="GCN",activation="relu")
-
-    print(model)
-    pipline = Pipeline(training_params=training_params,model=model)
+    args = parser_args()
+    model = Model(args)
+    pipline = Pipeline(args=args,model=model)
     pipline.load_data()
     pipline.train()
+# if __name__ == "__main__":
+#     # for i in range(1,196):
+#     #     data,_ = torch.load('nucleaise/models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=i))
+
+#     with open('nucleaise/go_set.txt','r') as file:
+#         go_list = file.read().splitlines()
+    
+#     model_params = {
+#     'batch_size':1,
+#     'num_go_labels':len(go_list),
+#     'go_list':go_list,
+#     'channels':[1024,512,256,64],
+#     'mapping_units':[64,2048], #residual neural network
+#     # 'go_units':None,
+#     # 'egnn_dim':1024,
+#     # 'fc_act':"relu",
+#     # 'heads':4,
+#     # 'concat':True,
+#     # 'negative_slope':0.2,
+#     # 'dropout_p':0,
+#     # 'add_self_loops':False,
+#     # 'edge_dim':None,
+#     # 'fill_value':'mean',
+#     # 'bias':False,
+#     # 'improved':False,
+#     # 'cached':False,
+#     # 'bias':False,
+#     'type':'GAT',
+#     'aggr_type':'mean',
+#     'num_blocks':4,
+
+#     'attention_heads':4,
+#     'cross_attention':False,
+# }
+
+#     training_params = {
+#         'name':'DeepGNN',
+#         'num_labels':2048,
+#         'node_limit':500,
+#         'batch_size':2,
+#         'epochs':10,
+#         'learning_rate':1e-04,
+#         'loss_fn':'bceloss', #BCELoss, MCLoss, HCLLoss
+#         'device':'cpu'
+#     }
+#     model = GNN(model_params)
+
+#     print(model)
+#     pipline = Pipeline(training_params=training_params,model=model)
+#     pipline.load_data()
+    # pipline.train()

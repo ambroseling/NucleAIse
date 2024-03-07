@@ -16,7 +16,7 @@ from nltk.corpus import stopwords
 from string import punctuation
 from scipy.spatial import distance
 import numpy as np
-from dagnn import DAGNN
+# from dagnn import DAGNN
 import time
 from tqdm import tqdm
 
@@ -122,6 +122,12 @@ def topsort(edge_index,graph_size):
 def add_order_info(graph):
     layer0 = topsort(graph.edge_index,graph.num_nodes)
     print("Done topsort for forward layer")
+    print(layer0)
+    print(torch.max(layer0))
+    print(len(layer0))
+    for i in range(0,18):
+        print(f"Num of nodes in layer {i}")
+        print(torch.sum(layer0 == i).item())
     ei2 = torch.LongTensor([list(graph.edge_index[1]),list(graph.edge_index[0])])
     layer1 =  topsort(ei2,graph.num_nodes)
     print("Done topsort for reverse layer")
@@ -135,7 +141,7 @@ def add_order_info(graph):
 
 
 def main():
-    url = '/preprocessing/go-basic.obo'
+    url = '/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/go-basic.obo'
     graph = obonet.read_obo(url)
     node_features = set()
     for node in graph.nodes:
@@ -170,24 +176,24 @@ def main():
     #Loading Data object
     g = Data()
     g.__num_nodes__ = graph.number_of_nodes()
-    H = torch.load("feature_matrx.pt")
-    g.x = H 
+    # H = torch.load("feature_matrx.pt")
+    # g.x = H 
 
     adj_mat = torch.tensor(adjacency_matrix)
     g.edge_index = adj_mat.nonzero().t().contiguous()
     add_order_info(g)
-    g.len_longest_path = float(torch.max(g._bi_layer_idx0).item())
-    print(g.x[0].shape)
+    # g.len_longest_path = float(torch.max(g._bi_layer_idx0).item())
+    # print(g.x[0].shape)
     # g.node_depth = 
     #g = [g]
 
     # dataloader = DataLoader(g,batch_size = 100,shuffle=False)
     # data = next(iter(dataloader))
     # print(data)
-    model = DAGNN(num_vocab=0,max_seq_len=0,w_edge_attr=False,emb_dim=700,hidden_dim=700,out_dim=700,num_rels=1,num_layers=2,
-    bidirectional=True,mapper_bias=True,agg_x=False,agg = "attn_h",out_wx=True,out_pool_all=False,out_pool ="max",encoder=None,dropout=0.0,word_vectors=None,emb_dims=[],activation=None,num_class=0,recurr=1)
-    print(model)
-    output = model(g)
+    # model = DAGNN(num_vocab=0,max_seq_len=0,w_edge_attr=False,emb_dim=700,hidden_dim=700,out_dim=700,num_rels=1,num_layers=2,
+    # bidirectional=True,mapper_bias=True,agg_x=False,agg = "attn_h",out_wx=True,out_pool_all=False,out_pool ="max",encoder=None,dropout=0.0,word_vectors=None,emb_dims=[],activation=None,num_class=0,recurr=1)
+    # print(model)
+    # output = model(g)
 
 if __name__ == "__main__":
     main()
