@@ -1,4 +1,5 @@
 /models/gnn/raw
 /models/gnn/processed
 /models/gnn/processed.zip
+/preprocessing/uniref50.sql
 feature_matrx.pt
