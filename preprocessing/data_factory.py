@@ -30,7 +30,7 @@ import scipy
 from scipy import sparse
 import re
 from goatools.base import get_godag
-
+import sqlite3
 def wrap_async_iter(ait, loop):
     """Wrap an asynchronous iterator into a synchronous one"""
     q = queue.Queue()
@@ -81,7 +81,7 @@ class ProteinDataset:
     godag = get_godag("go-basic.obo")
 
     processed_ids = set()
-    def __init__(self, dataset_type:str,batch_size: int, percent_sample: float, pool: Pool,loop: AbstractEventLoop,contact:str,embedding: Union[str, List[str]],tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,go_to_index,go_set,goa,args):
+    def __init__(self, dataset_type:str,batch_size: int, percent_sample: float, pool: Pool,loop: AbstractEventLoop,contact:str,embedding: Union[str, List[str]],tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,go_to_index,go_set,args):
         self.dataset_type = dataset_type
         self.batch_size = batch_size
         self.percent_sample = percent_sample
@@ -97,8 +97,8 @@ class ProteinDataset:
         self.go_to_index = go_to_index
         self.go_set = go_set
         self.gosubdag = GoSubDag(go_set,self.godag)
-        self.goa = goa
         self.args= args
+        # self.goa = goa
 
     async def get_protein_batch(self) -> Batch:
         async with self.pool.acquire() as connection:
@@ -143,7 +143,6 @@ class ProteinDataset:
                     sequence = row['sequence']
 
                 sequences =  [((row['id'],sequence))]  
-                print('seq len: ',len(sequence))  
                 protein_len = len(row['sequence'])
                 if self.embedding == ['esm','t5']:
                     esm_out = self.get_esm(sequences=sequences) #seq 10 -> esm -> 10x1024 (nodes features), 10x10 (cmap)
@@ -182,9 +181,9 @@ class ProteinDataset:
             for row in result:
                 ## BETTY
                 protein = process_protein(row)
-                batch_from_betty = self.betty(protein)
-                proteins.append(process_protein(row))
-                
+                # batch_from_betty = self.betty(protein)
+                proteins.append(protein)
+
             proteins = Batch.from_data_list(proteins)
             return proteins
         
@@ -274,20 +273,22 @@ class ProteinDataset:
 
 
 async def create_pool():
-    pool = await asyncpg.create_pool(
-        database="nucleaise",
-        user="postgres",
-        password="ambrose1015",  # Add password if required
-        host="localhost",          # Add host address if not running locally
-        port="5432",          # Add port number if not using default port
-        setup=setup_connection,    # Optionally, you can include setup function
-        min_size=32,
-        max_size=32
-    )
-    return pool
+    conn = sqlite3.connect("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/uniref50.sql")
+    return conn
+    # pool = await asyncpg.create_pool(
+    #     database="nucleaise",
+    #     user="postgres",
+    #     password="ambrose1015",  # Add password if required
+    #     host="localhost",          # Add host address if not running locally
+    #     port="5432",          # Add port number if not using default port
+    #     setup=setup_connection,    # Optionally, you can include setup function
+    #     min_size=32,
+    #     max_size=32
+    # )
+    # return pool
 
-async def setup_connection(connection):
-    await connection.execute("set search_path to public")
+# async def setup_connection(connection):
+#     await connection.execute("set search_path to public")
 
 
 

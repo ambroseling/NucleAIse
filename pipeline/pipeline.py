@@ -1,7 +1,9 @@
 import sys
 import os
 from pathlib import Path
+sys.path.append('/Users/ambroseling/Desktop/NucleAIse/nucleaise')
 sys.path.insert(0, str(Path(__file__).parent))
+
 import torch
 import numpy as np 
 import torch.nn as nn
@@ -79,7 +81,7 @@ class Pipeline():
         #data variabels
         self.index_to_taxo = {}
         self.taxo_to_index = {}
-        self.go_to_index = {}
+        self.go_to_index = {} 
         self.index_to_go = {}
         self.go_edge_index = None
         self.ontology = args.ontology
@@ -95,7 +97,7 @@ class Pipeline():
             with open('index_to_taxonomy.json') as json_file:
                 self.index_to_taxo = json.loads(json_file)
             with open('taxonomy_to_index.json') as json_file:
-                self.index_to_taxo = json.loads(json_file)
+                self.taxo_to_index = json.loads(json_file)
 
     def load_goa(self):
         goa = torch.load(f'./pipeline/config/{self.ontology}_go.pt')
@@ -132,10 +134,10 @@ class Pipeline():
         t5_model = T5EncoderModel.from_pretrained("Rostlab/prot_t5_xl_half_uniref50-enc")
         esm_model, esm_alphabet = esm.pretrained.esm2_t33_650M_UR50D()
         self.load_taxonomy()
-        goa = self.load_goa()
+        self.load_goa()
         taxo_to_index = self.taxo_to_index
-        self.training_dataset = ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,goa,self.args)
-        self.validation_dataset =  ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,goa,self.args)
+        self.training_dataset = ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,self.args)
+        self.validation_dataset =  ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,self.args)
         
         print("###############DATA LOADING SUCCESS###############")
 

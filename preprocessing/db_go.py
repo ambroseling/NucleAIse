@@ -124,6 +124,10 @@ def fetch_rows_and_extract_lists(conn, table_name, go_set,associations):
         cursor = conn.cursor()
         cursor.execute(f"SELECT id,goa FROM {table_name};")
         rows = cursor.fetchall()
+        #MP0934 -> [GO:0008567, GO:008234]
+        #set(),list()
+        #set: GO:098908,GO:9829487,GO:0983234
+        #list: GO:098908,GO:098908,GO:098908,GO:9829487,GO:9829487,GO:9829487,GO:9829487,GO:0983234
         for row in rows:
             accession_id = row[0]
             ids_list = row[1]  # Assuming the list is in the first column
@@ -204,6 +208,7 @@ async def main(args):
     conn = connect_to_postgres(args.dbname, args.user,args.password,args.host,args.port)
     fetch_rows_and_extract_lists(conn,args.tablename,go_set,associations)
     valid_associations = associations.copy()
+    #MP09823, goa: ['GO:008567']
     for protein, terms in associations.items():
         terms_copy = terms.copy()  # Create a copy of the set
         for term in terms_copy:
@@ -215,11 +220,12 @@ async def main(args):
                 print("There are still terms not present in DAG!")
             
     gosubdag = GoSubDag(go_set,godag)
+    #GOTerm
 
-    for go,go_info in gosubdag.go2obj.items():
-        if go_info.depth == 0 or go_info.level == 0:
-            print(go_info)
-            print(gosubdag.go2nt[go].dcnt)
+    # for go,go_info in gosubdag.go2obj.items():
+    #     if go_info.depth == 0 or go_info.level == 0:
+    #         print(go_info)
+    #         print(gosubdag.go2nt[go].dcnt)
 
     def dfs(go_term, frequency_dict, visited, top_terms):
         visited.add(go_term)
@@ -238,7 +244,7 @@ async def main(args):
     bp_ancestors = {}
     cc_ancestors = {}
     mf_ancestors = {}
-
+    #GO:008567 -> [GO:009674,GO:004567]
     visited = set() 
     top_terms = []  
     top_bp = dfs(bp, gosubdag.go2nt, visited, top_terms)
