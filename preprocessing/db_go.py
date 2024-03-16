@@ -238,7 +238,7 @@ async def main(args):
         for child in go_term.children:
             if child not in visited:
                 dfs(child, gosubdag.go2nt, visited, top_terms)
-        return top_terms[:args.max_goas]  
+        return top_terms[:args.max_goas]
 
     bp = gosubdag.go2obj['GO:0008150']
     cc = gosubdag.go2obj['GO:0005575']

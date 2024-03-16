@@ -1,6 +1,9 @@
 # NucleAIse
 This readme will act as a guide for understanding this repository, where everything is and how they all 
 
+## TODO:
+- implement taxonomy mapping
+
 ## Assumptions
 - There are 3 ontologies in GOA and these 3 ontologies are seperate, we can treat them as seperate Directed Acyclic Graphs. 
 - we only consider the top K labels in the Gene Ontology 
@@ -23,13 +26,13 @@ This readme will act as a guide for understanding this repository, where everyth
     d.append(d2)
     b = Batch.from_data_list(d)
     
-    #The resulting shapes of b in this example :
+    #The resulting shapes of b in this example:
     #b.x: (shape: 15 x 10): the node feature matrices are stacked together
     #b.edge_index: (shape: 2,20): the egdes are stacked in dim=1 
     #b.batch ***: (shape: 15): tells PyG which nodes belong to which graph [0,0,0,0,0,1,1,1,1,1,1,1,1,1,1]
     #b.ptr ***: (shape: 3), acts as list of pointers of where the edge_index is for each graph
 
-    #you can run your model through this batch object
+    #You can run your model through this batch object
     out = model(b)
     loss = loss_fn(out,b.y)
     loss.backwards()
@@ -79,4 +82,128 @@ This readme will act as a guide for understanding this repository, where everyth
     - Some helper functions for `load_data`:
         - `load_taxonomy`: NOT YET COMPLETE but basically assuming we have a dictonary that goes from taxonomy to index and vice versa we use that to tokenize the taxonomies. 
         - `load_goa`: this function loads the pt files to obtain the 3 things: go_set (the raw list of GOAs from our database), the edge_index (the connections of the GO tree), the index_to_go and go_to_index mappings
-    
+
+- **Model definition**: /models/deepgnn.py
+    - this python script outlines the model definition
+    ```python
+    Model(
+    #GNN Block 1: doing residual level graph processing
+
+    #Each GNN Block has the following structure:
+    # GCN Layer (graph convolution)
+    # LayerNormalizaiton
+    # SelfAttentionLayers
+
+    #input shape: (num_of_residues x 1280)
+    #output shape: (num_of_residues x 1024)
+  (blocks): Sequential(
+    (0): GNNBlock(
+      (model): GCNConv(1280, 1000)
+      (activation): ReLU()
+      (dropout): Dropout(p=0.5, inplace=False)
+    )
+    (1): LayerNorm((1000,), eps=1e-05, elementwise_affine=True)
+    (2): SelfAttention(
+      (in_proj): Linear(in_features=1000, out_features=3000, bias=True)
+      (out_proj): Linear(in_features=1000, out_features=1000, bias=True)
+    )
+    (3): SelfAttention(
+      (in_proj): Linear(in_features=1000, out_features=3000, bias=True)
+      (out_proj): Linear(in_features=1000, out_features=1000, bias=True)
+    )
+    (4): LayerNorm((1000,), eps=1e-05, elementwise_affine=True)
+    (5): GNNBlock(
+      (model): GCNConv(1000, 1024)
+      (activation): ReLU()
+      (dropout): Dropout(p=0.5, inplace=False)
+    )
+    (6): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+    (7): SelfAttention(
+      (in_proj): Linear(in_features=1024, out_features=3072, bias=True)
+      (out_proj): Linear(in_features=1024, out_features=1024, bias=True)
+    )
+    (8): SelfAttention(
+      (in_proj): Linear(in_features=1024, out_features=3072, bias=True)
+      (out_proj): Linear(in_features=1024, out_features=1024, bias=True)
+    )
+    (9): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+  )
+  #We perform mean aggregation to obtain a global representation or embedding (CLS embedding) to be passed to the residual
+  #Input shape: (num_of_residues x 1024)
+  #output shape: (1 , 1024)
+  (aggr): MeanAggregation()
+
+  #This is the embedding layer to maps a taxonomy to an embedding that is trainable
+  #Input shape: (1000)
+  #output shape: (1 , 1024)
+  (tax_emb): Embedding(1000, 1024)
+
+  #The residual network is simply a bunch of linear layers stacked together with residual connections, residual connections help tackle vanishing gradients and to help the model learn the identity mapping
+
+  #Input shape: (1, 1024)
+  #output shape: (1 , num_of_goas)
+  (residual_block): ResidualNetwork(
+    (forward_linear1): Linear(in_features=1024, out_features=1024, bias=True)
+    (batchnorm1): BatchNorm1d(1024, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (activation1): ReLU()
+    (dropout1): Dropout(p=0.5, inplace=False)
+    (pred_linear1): Linear(in_features=1024, out_features=2, bias=True)
+    (sigmoid1): Sigmoid()
+    (forward_linear2): Linear(in_features=1026, out_features=1026, bias=True)
+    (batchnorm2): BatchNorm1d(1026, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (activation2): ReLU()
+    (dropout2): Dropout(p=0.5, inplace=False)
+    (pred_linear2): Linear(in_features=1026, out_features=2, bias=True)
+    (sigmoid2): Sigmoid()
+    (forward_linear3): Linear(in_features=1028, out_features=1028, bias=True)
+    (batchnorm3): BatchNorm1d(1028, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (activation3): ReLU()
+    (dropout3): Dropout(p=0.5, inplace=False)
+    (pred_linear3): Linear(in_features=1028, out_features=2, bias=True)
+    (sigmoid3): Sigmoid()
+    (forward_linear4): Linear(in_features=1030, out_features=1030, bias=True)
+    (batchnorm4): BatchNorm1d(1030, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    (activation4): ReLU()
+    (dropout4): Dropout(p=0.5, inplace=False)
+    (pred_linear4): Linear(in_features=1030, out_features=4, bias=True)
+    (sigmoid4): Sigmoid()
+    (forward_linear5): Linear(in_features=10, out_features=1000, bias=True)
+  )
+  #This is the GO Block GNN model, currently using a DAGNN model (we can explain this on a seperate basis if needed)
+  #This model is inactive right now, not being trained with main model
+  (go_block): GOBlock(
+    (activation): SiLU()
+    (linear_1): Linear(in_features=1, out_features=50, bias=True)
+    (linear_2): Linear(in_features=50, out_features=100, bias=True)
+    (go_layers): Sequential(
+      (0): GNNBlock(
+        (model): DAGNN(
+          (node_aggr_0): ModuleList(
+            (0-1): 2 x AttnConv()
+          )
+          (node_aggr_1): ModuleList(
+            (0-1): 2 x AttnConv()
+          )
+          (cells_0): ModuleList(
+            (0): GRUCell(100, 200)
+            (1): GRUCell(200, 200)
+          )
+          (cells_1): ModuleList(
+            (0): GRUCell(100, 200)
+            (1): GRUCell(200, 200)
+          )
+          (final_linear_1): Linear(in_features=900, out_features=100, bias=True)
+          (final_linear_2): Linear(in_features=100, out_features=50, bias=True)
+          (final_linear_3): Linear(in_features=50, out_features=1, bias=True)
+          (final_activation): SiLU()
+          (output_activation): Sigmoid()
+          (dropout): Dropout(p=0.0, inplace=False)
+          (graph_pred_linear_list): ModuleList()
+        )
+        (activation): ReLU()
+        (dropout): Dropout(p=0.5, inplace=False)
+            )
+            )
+        )
+        )
+    ```

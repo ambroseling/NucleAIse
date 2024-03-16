@@ -212,7 +212,8 @@ class ProteinDataset:
 
         truth = torch.tensor(truth).unsqueeze(0)
         truth = torch.zeros(truth.size(0), len(self.go_to_index)).scatter_(1, truth, 1.) 
-
+        # [1,3,4,5]
+        # [0,1,0,1,1,1,0,0,0,0]
         return truth
     
     def get_edge_index_and_features(self,adj_m):
