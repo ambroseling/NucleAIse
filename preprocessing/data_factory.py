@@ -98,7 +98,6 @@ class ProteinDataset:
         self.go_set = go_set
         self.gosubdag = GoSubDag(go_set,self.godag)
         self.args= args
-        # self.goa = goa
 
     async def get_protein_batch(self) -> Batch:
         async with self.pool.acquire() as connection:
@@ -143,6 +142,7 @@ class ProteinDataset:
                     sequence = row['sequence']
 
                 sequences =  [((row['id'],sequence))]  
+                print('seq len: ',len(sequence))  
                 protein_len = len(row['sequence'])
                 if self.embedding == ['esm','t5']:
                     esm_out = self.get_esm(sequences=sequences) #seq 10 -> esm -> 10x1024 (nodes features), 10x10 (cmap)
@@ -197,11 +197,6 @@ class ProteinDataset:
         truth = []
         target = set()
 
-        # print("This protein has these goas (from db):")
-        # print(goa)
-        # print(len(self.go_to_index))
-        # print("before ancestor:")
-        # print(goa)
         for go in goa: #loop through all the GOAs that belong to this protein
             target.add(go.strip("'"))
             #add them to target
@@ -209,25 +204,15 @@ class ProteinDataset:
             if go.strip("'") in self.gosubdag.go2obj:
                 ancestors = list(self.gosubdag.go2obj[go.strip("'")].get_all_parents())
                 target.update(ancestors)
-        # print('The proteins has these goas including all the ancestors:')
-        # print(target)
-        
-        
-        
-        # print("We are considering the these goas: ",self.go_to_index.keys())
-
 
         for go in self.go_to_index:
             if go in target:
                 truth.append(self.go_to_index[go])
   
-        # print('taget:')
-        # go through all the 
-        # print(len(truth))
+
         truth = torch.tensor(truth).unsqueeze(0)
         truth = torch.zeros(truth.size(0), len(self.go_to_index)).scatter_(1, truth, 1.) 
-        # print('truth:')
-        # print(truth)
+
         return truth
     
     def get_edge_index_and_features(self,adj_m):
@@ -273,22 +258,22 @@ class ProteinDataset:
 
 
 async def create_pool():
-    conn = sqlite3.connect("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/uniref50.sql")
-    return conn
-    # pool = await asyncpg.create_pool(
-    #     database="nucleaise",
-    #     user="postgres",
-    #     password="ambrose1015",  # Add password if required
-    #     host="localhost",          # Add host address if not running locally
-    #     port="5432",          # Add port number if not using default port
-    #     setup=setup_connection,    # Optionally, you can include setup function
-    #     min_size=32,
-    #     max_size=32
-    # )
-    # return pool
+    # conn = sqlite3.connect("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/uniref50.sql")
+    # return conn
+    pool = await asyncpg.create_pool(
+        database="nucleaise",
+        user="postgres",
+        password="ambrose1015",  # Add password if required
+        host="localhost",          # Add host address if not running locally
+        port="5432",          # Add port number if not using default port
+        setup=setup_connection,    # Optionally, you can include setup function
+        min_size=32,
+        max_size=32
+    )
+    return pool
 
-# async def setup_connection(connection):
-#     await connection.execute("set search_path to public")
+async def setup_connection(connection):
+    await connection.execute("set search_path to public")
 
 
 
