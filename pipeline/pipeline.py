@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 sys.path.append('/Users/ambroseling/Desktop/NucleAIse/nucleaise')
 sys.path.insert(0, str(Path(__file__).parent))
-
+import sqlite3
 import torch
 import numpy as np 
 import torch.nn as nn
@@ -100,7 +100,7 @@ class Pipeline():
                 self.taxo_to_index = json.loads(json_file)
 
     def load_goa(self):
-        goa = torch.load(f'./pipeline/config/{self.ontology}_go.pt')
+        goa = torch.load(f'/Users/ambroseling/Desktop/NucleAIse/nucleaise/pipeline/config/{self.ontology}_go.pt')
         self.go_set = goa['go_set']
         self.go_edge_index = goa[f'{self.ontology}_edge_index']
         self.go_to_index = goa[f'{self.ontology}_go_to_index']
@@ -109,6 +109,8 @@ class Pipeline():
 
     def load_data(self):
         async def create_pool():
+            # conn = sqlite3.connect("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/uniref50.sql")
+            # return conn
             pool = await asyncpg.create_pool(
                 database="nucleaise",
                 user="postgres",

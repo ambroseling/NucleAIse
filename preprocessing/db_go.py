@@ -7,9 +7,12 @@ import numpy as np
 import collections
 import argparse
 import torch
+from tqdm import tqdm
 from goatools.base import get_godag
 from goatools.gosubdag.gosubdag import GoSubDag
 from goatools.go_enrichment import GOEnrichmentStudy
+import sqlite3
+import os
 godag = get_godag("go-basic.obo")
 
 
@@ -124,11 +127,8 @@ def fetch_rows_and_extract_lists(conn, table_name, go_set,associations):
         cursor = conn.cursor()
         cursor.execute(f"SELECT id,goa FROM {table_name};")
         rows = cursor.fetchall()
-        #MP0934 -> [GO:0008567, GO:008234]
-        #set(),list()
-        #set: GO:098908,GO:9829487,GO:0983234
-        #list: GO:098908,GO:098908,GO:098908,GO:9829487,GO:9829487,GO:9829487,GO:9829487,GO:0983234
-        for row in rows:
+        print("Going through all the rows in the database")
+        for row in tqdm(rows):
             accession_id = row[0]
             ids_list = row[1]  # Assuming the list is in the first column
             protein_goa = set()
@@ -139,6 +139,7 @@ def fetch_rows_and_extract_lists(conn, table_name, go_set,associations):
             associations[accession_id] = protein_goa
     except psycopg2.Error as e:
         print("Error fetching rows from PostgreSQL:", e)
+
 
 def topsort(edge_index,graph_size):
     node_ids = np.arange(graph_size,dtype=int)
@@ -189,12 +190,14 @@ def topsort_with_frequency_and_layers(frequency_dict, edge_index, layer_index, K
 def parser_args():
     parser = argparse.ArgumentParser(description="")
     parser.add_argument("--max_goas",type=int,default=10,help="")
-    parser.add_argument("--tablename",type=str,default="protein_sp",help="")
-    parser.add_argument("--dbname",type=str,default="nucleaise",help="")
+    parser.add_argument("--tablename",type=str,default="uniref50_protein",help="")
+    parser.add_argument("--dbname",type=str,default="uniref50",help="")
     parser.add_argument("--user",type=str,default="postgres",help="")
     parser.add_argument("--password",type=str,default="ambrose1015",help="")
     parser.add_argument("--host",type=str,default="localhost")
     parser.add_argument("--port",type=str,default="5432")
+    parser.add_argument("--directory",type=str,default="/Users/ambroseling/Desktop/NucleAIse/nucleaise/pipeline/config")
+
     args = parser.parse_args()
     return args
 
@@ -218,7 +221,7 @@ async def main(args):
         for term in terms:
             if term not in godag:
                 print("There are still terms not present in DAG!")
-            
+    print(f"THere are {len(set(go_set))} unqiue go terms!")
     gosubdag = GoSubDag(go_set,godag)
     #GOTerm
 
@@ -265,8 +268,9 @@ async def main(args):
     def create_edge_index(top_list,go_to_index,ancestors):
         src_index = []
         target_index = []
-        for go_term,freq in top_list:
+        for go_term,freq in tqdm(top_list):
             parent_idx = go_to_index[go_term.id]
+            
             ancestors[go_term.id]= list(go_term.get_all_parents())
             for child in go_term.children:
                 if child.id in bp_go_to_index:
@@ -274,6 +278,7 @@ async def main(args):
                     src_index.append(child_index)
                     target_index.append(parent_idx)
         return torch.tensor([src_index,target_index])
+    
     bp_edge_index = create_edge_index(top_bp, bp_go_to_index,bp_ancestors)
     bp_th['go_set'] = go_set
     bp_th['bp_edge_index'] = bp_edge_index
@@ -293,9 +298,9 @@ async def main(args):
     mf_th['mf_go_to_index'] = mf_go_to_index
     mf_th['mf_index_to_go'] = mf_index_to_go
 
-    torch.save(bp_th,'/Users/ambroseling/Desktop/NucleAIse/nucleaise/pipeline/config/bp_go.pt')
-    torch.save(cc_th,'/Users/ambroseling/Desktop/NucleAIse/nucleaise/pipeline/configcc_go.pt')
-    torch.save(mf_th,'/Users/ambroseling/Desktop/NucleAIse/nucleaise/pipeline/config/mf_go.pt')
+    torch.save(bp_th,os.path.join(args.directory,'bp_go.pt'))
+    torch.save(cc_th,os.path.join(args.directory,'cc_go.pt'))
+    torch.save(mf_th,os.path.join(args.directory,'mf_go.pt'))
 
 if __name__ == "__main__":
     args = parser_args()
