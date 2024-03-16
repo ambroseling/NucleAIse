@@ -286,6 +286,7 @@ class Pipeline():
 
 def parser_args():
     parser = argparse.ArgumentParser(description="Definition of all the arguments to this training script")
+    
     #Training arguments
     parser.add_argument("--model_name",type=str,default="gnn_lm",help="name for the model")
     parser.add_argument("--num_labels",type=int,default=10,help="The number of GO labels that we are considering")
@@ -318,6 +319,7 @@ def parser_args():
 if __name__ == "__main__":
     args = parser_args()
     model = Model(args)
+    print(model)
     pipline = Pipeline(args=args,model=model)
     pipline.load_data()
     pipline.train()
