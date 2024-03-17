@@ -1,12 +1,19 @@
 # NucleAIse
-This readme will act as a guide for understanding this repository, where everything is and how they all 
+This readme will act as a guide for understanding this repository, where everything is and how they all work together 
 
 ## TODO:
 - implement taxonomy mapping
+- figure out how to create a data server to host the data on cluster , since we are currently reading from a local pgAdmin data server
+
+## Model Architecuture
+<center>
+  <img src="arch.png" alt="Alt Text">
+</center>
 
 ## Assumptions
 - There are 3 ontologies in GOA and these 3 ontologies are seperate, we can treat them as seperate Directed Acyclic Graphs. 
-- we only consider the top K labels in the Gene Ontology 
+- we only consider the top K most frequent labels in the Gene Ontology tree for predictions
+    - what this means is that we only select K labels from the gene ontology tree and these K labels have the highest frequency in occurence throughout our dataset
 - we use PyG to do all of our graph processing
     - in PyG we represent our graphs using `Data` objects, each Data object has a few attributes
         1) `x`: the nodes features (shape: num_of_nodes x node_feature_dimension)
@@ -38,10 +45,12 @@ This readme will act as a guide for understanding this repository, where everyth
     loss.backwards()
     ```
 - we use nn.Embedding to encode our taxonomy information into embeddings that are trainable
+-  
 
 
-## Main scripts:
-- **GO graph construction:** /processing/db_go.py
+
+## Main components:
+- **GO graph construction:** /preprocessing/db_go.py
     - The purpose of this script is for constructing the Gene Ontology sub graph, which is needed for GO-graph processing
     1)  We connect to our dataset first, iterate through all the proteins in our database and record how many instances there are for all the GO-labels 
     2)  We create a GOSubDag object from the [goatools](https://github.com/tanghaibao/goatools) and this object receives the raw list of GOAs collected from our dataset (the one not considering the ancestors of GOAs of each sample), then during construction of this object, it correctly counts the occurences of each GOA which accounts for all its ancestors as well. From this object we can access attributes such as parents,children, depth, level, count (which is the frequency of occurence of that GOA)
@@ -54,7 +63,7 @@ This readme will act as a guide for understanding this repository, where everyth
         -   go_set: the raw list of GO labels from our dataset
     - **Note:** we cannot directly collect all the GO labels in our protein, why? because the labels shown for each protein do not account for its parents. If one row in the database is like this (sequence: AMOSJJHEG..., goa: [GO:000345,GO:000123]), this representation would say GO:000345 occured once and same for GO: 000123, but this does not consider the parents of (GO: 000345 and GO:000123). So if GO:000345 has 1 parent GG:000998, the actual labels associated to this protein are goa:[GO:000345,GO:000123, GO:000998]
 
-- **ProteinDataset definition**: /processing/data_factory.py
+- **ProteinDataset definition**: /preprocessing/data_factory.py
     - The purpose of this class is to help create a pipeline for loading data, processing data from our database and collating them into batches that can be used in training
     - How it works:
     ```python
@@ -82,9 +91,9 @@ This readme will act as a guide for understanding this repository, where everyth
     - Some helper functions for `load_data`:
         - `load_taxonomy`: NOT YET COMPLETE but basically assuming we have a dictonary that goes from taxonomy to index and vice versa we use that to tokenize the taxonomies. 
         - `load_goa`: this function loads the pt files to obtain the 3 things: go_set (the raw list of GOAs from our database), the edge_index (the connections of the GO tree), the index_to_go and go_to_index mappings
-
+    - We have a train function which acts as the training loop, it is a typical training loop 
 - **Model definition**: /models/deepgnn.py
-    - this python script outlines the model definition
+    - This python script outlines the model definition of our main model
     ```python
     Model(
     #GNN Block 1: doing residual level graph processing
@@ -169,7 +178,7 @@ This readme will act as a guide for understanding this repository, where everyth
     (sigmoid4): Sigmoid()
     (forward_linear5): Linear(in_features=10, out_features=1000, bias=True)
   )
-  #This is the GO Block GNN model, currently using a DAGNN model (we can explain this on a seperate basis if needed)
+  #GNN Block 2: This is the GO Block GNN model, currently using a DAGNN model (we can explain this on a seperate basis if needed)
   #This model is inactive right now, not being trained with main model
   (go_block): GOBlock(
     (activation): SiLU()
