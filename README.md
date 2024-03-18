@@ -4,10 +4,14 @@ This readme will act as a guide for understanding this repository, where everyth
 ## TODO:
 - implement taxonomy mapping
 - figure out how to create a data server to host the data on cluster , since we are currently reading from a local pgAdmin data server
+- Potential issues:
+    - oversmoothing
+    - hierarchical class imbalance
+    - 
 
 ## Model Architecuture
 <center>
-  <img src="arch.png" alt="Alt Text">
+  <img src="archs/nucleaise.png" alt="Alt Text">
 </center>
 
 ## Assumptions
@@ -81,7 +85,14 @@ This readme will act as a guide for understanding this repository, where everyth
         - 3) we construct the edge_index (shape: 2 x num_of_edges) and edge_attr (shape:  num_of_edges x edge_feature_dim) from the attention map, we also construct the correct target vector with the function `self.get_target`
         - 4) with all this information we can create `Data` objects from PyG which is just a way of representing 1 graph (node features, connections, edge features, output...). With a list of `Data` objects you can create a `DataBatch` which is just multiple graphs stacked together to form 1 big graph so if your batch size is 4, DataBatch will have 4 graphs stacked into 1. 
     - each iteration of the training loop `for b in d:` the b returns this DataBatch object
-
+    - **NOTE:** when we construct the targets of each sample or each batch (during the call to `self.get_target()`), this is where we utilize the `go_edge_index`, `go_to_index` and `go_set`, which we obtained from running `db_go.py`.
+        - How does this function work? 
+            - INPUT: the list of GOAs associated with that protein or sample
+            - OUTPUT: a target vector of shape (num_of_goas,) with the positive classes labelled as 1, negative classes as 0
+            - 1)
+            - 2)
+            - 3)
+            - 4) 
 - **Pipeline definition**: /pipeline/pipeline.py
     - The purpose of this class is to define a pipeline class for us to run our training and load our data, run validation
     - How does it work?
