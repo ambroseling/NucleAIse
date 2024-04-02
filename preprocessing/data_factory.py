@@ -146,6 +146,7 @@ class ProteinDataset:
                 protein_len = len(row['sequence'])
                 if self.embedding == ['esm','t5']:
                     esm_out = self.get_esm(sequences=sequences) #seq 10 -> esm -> 10x1024 (nodes features), 10x10 (cmap)
+                    
                     emb_esm = esm_out['representations'][33][0,1:protein_len+1]
                     emb_t5 = self.get_t5(sequences=sequences)
                     emb = torch.cat([emb_esm,emb_t5],dim=1)

@@ -2,4 +2,5 @@
 /models/gnn/processed
 /models/gnn/processed.zip
 /preprocessing/uniref50.sql
+/preprocessing/data
 feature_matrx.pt
