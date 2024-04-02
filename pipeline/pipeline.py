@@ -20,7 +20,8 @@ import asyncpg
 from torch.profiler import profile, record_function, ProfilerActivity
 import threading
 from models.deepgnn import Model
-from preprocessing.data_factory import ProteinDataset
+from preprocessing.data_factory_updated import ProteinDataset
+# 
 # from utils.go_graph_generation import generate_go_graph
 # from utils.go_graph_generation import get_go_list_from_data
 from torch_geometric.data import Data,Batch
@@ -30,7 +31,7 @@ import math
 import esm
 from transformers import BertModel, BertTokenizer
 from transformers import T5Tokenizer, T5Model,T5EncoderModel
-
+from torch.utils.data import Dataset,DataLoader
 
 PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7
 
@@ -138,11 +139,22 @@ class Pipeline():
         self.load_taxonomy()
         self.load_goa()
         taxo_to_index = self.taxo_to_index
-        self.training_dataset = ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,self.args)
-        self.validation_dataset =  ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,self.args)
-        
+        if self.args.use_local_postgresql:
+            self.training_dataset = ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,self.args)
+            self.validation_dataset =  ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,self.args)
+        else:
+            from preprocessing.data_factory_updated import ProteinDataset
+            def custom_collate(batch):
+                return Batch.from_data_list(batch)
+            train_protein_dataset = ProteinDataset("esm","esm",self.go_to_index,self.go_set,"/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/test_per_file-2",args)
+            val_protein_dataset = ProteinDataset("esm","esm",self.go_to_index,self.go_set,"/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/test_per_file-2",args)
+            self.training_dataset = DataLoader(train_protein_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0,collate_fn = custom_collate,prefetch_factor=2)
+            # for batch in self.training_dataset:
+            #     print('yahooo')
+            #     print(batch)
+            #     break
+            # self.validation_dataset = DataLoader(self.train, batch_size=self.batch_size, shuffle=True, num_workers=0,collate_fn=self.custom_collate)
         print("###############DATA LOADING SUCCESS###############")
-
         print("\n")
 
     def train(self):
@@ -153,18 +165,10 @@ class Pipeline():
         self.optimizer = torch.optim.Adam(self.model.parameters(),lr=self.learning_rate)
 
         for epoch in range(self.epoch):
-
             epoch_start = time.time()
-            # self.avg_train_loss = 0.0
-            # self.avg_val_loss = 0.0
-            # self.avg_train_acc = 0.0
-            # self.avg_val_acc = 0.0
             b = 0
-           
             for batch in self.training_dataset:
                 print(batch)
-                # if batch.x.shape[0] > self.node_limit or batch.x.shape[0] <=0 or batch.y.shape[0]!=self.batch_size*self.num_labels or batch.batch[-1]+1!=self.batch_size:
-                #     continue
                 batch.x = batch.x.type(torch.float32)
                 batch.y = batch.y.type(torch.float32)
                 batch.edge_attr = batch.edge_attr.type(torch.float32)
@@ -187,25 +191,6 @@ class Pipeline():
                 self.training_acc.append(acc)
                 print(f"======== Trainin Loss: {loss.item()}  Training Accuracy: {acc} ==========")
 
-                # with torch.no_grad():
-                #     for batch in tqdm(self.val_loader):
-                #         if batch.x.shape[0] > self.node_limit or batch.x.shape[0] <=0 or batch.y.shape[0]!=self.batch_size*self.num_labels or batch.batch[-1]+1!=self.batch_size:
-                #             continue
-                #         output = self.model(batch)
-                #         output.y = output.y.unsqueeze(-1)
-                #         output.x = output.x.reshape((self.batch_size*self.num_labels,1))
-                #         loss = self.loss_fn(output.x,output.y.float())
-                #         self.avg_val_acc += self.get_acc(output.x,output.y.float())
-                #         self.avg_val_loss += loss.item()
-                #         print("======== Validation Loss: ",loss.item()," ==========")
-                #     self.avg_val_acc /= len(self.val_loader)
-                #     self.avg_val_loss /= len(self.val_loader)
-                #     self.val_loss.append(self.avg_val_loss) 
-                #     self.val_acc.append(self.avg_val_acc)
-                #     if self.avg_val_loss < self.best_val_loss:
-                #         self.best_val_loss = self.avg_val_loss
-                #         self.best_epoch = epoch
-            #         self.best_path = f'../checkpoints/{self.model_name}_bs{self.batch_size}_lr{self.learning_rate}_win{self.seq_len}-{self.target_len}-{self.pred_len}_v{self.velocity}_sc{self.scale}_ep{epoch}.pth'
             if b%100 == 0:
                 epoch_end = time.time()
                 epoch_time = epoch_end-epoch_start
@@ -295,8 +280,11 @@ def parser_args():
     parser.add_argument("--batch_size",type=int,default=2,help="training batch size")
     parser.add_argument("--epochs",type=int,default=1,help="training batch size")
     parser.add_argument("--num_train_steps",type=int,default=10000,help="training batch size")
-    parser.add_argument("--learning_rate",type=float,default=1e-4,help="training batch size")
+    parser.add_argument("--num_workers",type=int,default=4,help="num workers")
+    parser.add_argument("--prefetch_factor",type=int,default=4,help="numworkers*prefetch_factor number of batches gets prefetched")
+    parser.add_argument("--learning_rate",type=float,default=1e-4,help="learning rate")
     parser.add_argument("--device",type=str,default='cpu',help="training batch size")
+    parser.add_argument("--use_local_postgresql",type=bool,default=False,help="training batch size")
 
     #Model parameters
     parser.add_argument("--channels",type=list,default=[1280,1000,1024],help="training batch size")

@@ -13,6 +13,7 @@ from goatools.gosubdag.gosubdag import GoSubDag
 from goatools.go_enrichment import GOEnrichmentStudy
 import sqlite3
 import os
+import ast
 godag = get_godag("go-basic.obo")
 
 
@@ -140,6 +141,18 @@ def fetch_rows_and_extract_lists(conn, table_name, go_set,associations):
     except psycopg2.Error as e:
         print("Error fetching rows from PostgreSQL:", e)
 
+def load(dir,go_set,associations):
+    for file in tqdm(os.listdir(dir)):
+        pt = torch.load(os.path.join(dir,file))
+        goas = pt['goa']
+        goas = ast.literal_eval(goas)
+        accession_id = pt['ID']
+        protein_goa = set()
+        for goa in goas:
+            go_set.append(goa)
+            protein_goa.add(goa)
+
+        associations[accession_id] = protein_goa
 
 def topsort(edge_index,graph_size):
     node_ids = np.arange(graph_size,dtype=int)
@@ -189,7 +202,7 @@ def topsort_with_frequency_and_layers(frequency_dict, edge_index, layer_index, K
 
 def parser_args():
     parser = argparse.ArgumentParser(description="")
-    parser.add_argument("--max_goas",type=int,default=10,help="")
+    parser.add_argument("--max_goas",type=int,default=1000,help="")
     parser.add_argument("--tablename",type=str,default="uniref50_protein",help="")
     parser.add_argument("--dbname",type=str,default="uniref50",help="")
     parser.add_argument("--user",type=str,default="postgres",help="")
@@ -208,8 +221,9 @@ async def main(args):
     bp_th = {}
     mf_th = {}
     cc_th = {}
-    conn = connect_to_postgres(args.dbname, args.user,args.password,args.host,args.port)
-    fetch_rows_and_extract_lists(conn,args.tablename,go_set,associations)
+    load("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file",go_set,associations)
+    # conn = connect_to_postgres(args.dbname, args.user,args.password,args.host,args.port)
+    # fetch_rows_and_extract_lists(conn,args.tablename,go_set,associations)
     valid_associations = associations.copy()
     #MP09823, goa: ['GO:008567']
     for protein, terms in associations.items():
@@ -284,6 +298,7 @@ async def main(args):
     bp_th['bp_edge_index'] = bp_edge_index
     bp_th['bp_go_to_index'] = bp_go_to_index
     bp_th['bp_index_to_go'] = bp_index_to_go
+    # print(bp_index_to_go)
 
 
     cc_edge_index = create_edge_index(top_cc, cc_go_to_index,cc_ancestors)
