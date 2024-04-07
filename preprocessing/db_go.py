@@ -235,7 +235,7 @@ async def main(args):
         for term in terms:
             if term not in godag:
                 print("There are still terms not present in DAG!")
-    print(f"THere are {len(set(go_set))} unqiue go terms!")
+    # print(f"THere are {len(set(go_set))} unqiue go terms!")
     gosubdag = GoSubDag(go_set,godag)
     #GOTerm
 
@@ -244,33 +244,51 @@ async def main(args):
     #         print(go_info)
     #         print(gosubdag.go2nt[go].dcnt)
 
-    def dfs(go_term, frequency_dict, visited, top_terms):
+    def dfs(go_term, frequency_dict, visited, top_terms,freq_tree):
         visited.add(go_term)
-        if go_term.id in gosubdag.go2nt:
-            top_terms.append((go_term, gosubdag.go2nt[go_term.id].dcnt))
+        if go_term.id in gosubdag.go2nt and go_term.id in freq_tree:
+            top_terms.append((go_term,freq_tree[go_term.id]))
         top_terms.sort(key=lambda x: x[1], reverse=True)
         for child in go_term.children:
             if child not in visited:
-                dfs(child, gosubdag.go2nt, visited, top_terms)
+                dfs(child, gosubdag.go2nt, visited, top_terms,freq_tree)
         return top_terms[:args.max_goas]
 
     bp = gosubdag.go2obj['GO:0008150']
     cc = gosubdag.go2obj['GO:0005575']
     mf = gosubdag.go2obj['GO:0003674']
-
+    def count_freq(associations):
+        go_freq = {}
+        for protein in associations:
+            # print("protein: ",protein)
+            # print("terms: ",associations[protein])
+            go_terms = associations[protein]
+            go_terms_set = set()
+            for term in go_terms:
+                go_terms_set.update(term)
+                go_terms_set.update(list(gosubdag.go2obj[term].get_all_parents()))
+            # print('go terms with ancestors: ',go_terms_set)
+            for term in go_terms_set:
+                if term in go_freq:
+                    go_freq[term] += 1  
+                else:
+                    go_freq[term] = 1
+        print("Len of go_freq: ",len(go_freq))
+        return go_freq
+    freq_tree = count_freq(valid_associations)
     bp_ancestors = {}
     cc_ancestors = {}
     mf_ancestors = {}
     #GO:008567 -> [GO:009674,GO:004567]
     visited = set() 
     top_terms = []  
-    top_bp = dfs(bp, gosubdag.go2nt, visited, top_terms)
+    top_bp = dfs(bp, gosubdag.go2nt, visited, top_terms,freq_tree)
     visited = set()  
     top_terms = []  
-    top_cc = dfs(cc, gosubdag.go2nt, visited, top_terms)
+    top_cc = dfs(cc, gosubdag.go2nt, visited, top_terms,freq_tree)
     visited = set()  
     top_terms = []   
-    top_mf = dfs(mf, gosubdag.go2nt, visited, top_terms)
+    top_mf = dfs(mf, gosubdag.go2nt, visited, top_terms,freq_tree)
 
 
     bp_go_to_index = {term[0].id: index for index, term in enumerate(top_bp)}
@@ -293,11 +311,15 @@ async def main(args):
                     target_index.append(parent_idx)
         return torch.tensor([src_index,target_index])
     
+
+
     bp_edge_index = create_edge_index(top_bp, bp_go_to_index,bp_ancestors)
     bp_th['go_set'] = go_set
     bp_th['bp_edge_index'] = bp_edge_index
     bp_th['bp_go_to_index'] = bp_go_to_index
     bp_th['bp_index_to_go'] = bp_index_to_go
+    bp_th['valid_associations'] = valid_associations
+
     # print(bp_index_to_go)
 
 
@@ -306,17 +328,24 @@ async def main(args):
     cc_th['cc_edge_index'] = cc_edge_index
     cc_th['cc_go_to_index'] = cc_go_to_index
     cc_th['cc_index_to_go'] = cc_index_to_go
+    cc_th['valid_associations'] = valid_associations
 
     mf_edge_index = create_edge_index(top_mf, mf_go_to_index,mf_ancestors)
     mf_th['go_set'] = go_set
     mf_th['mf_edge_index'] = mf_edge_index
     mf_th['mf_go_to_index'] = mf_go_to_index
     mf_th['mf_index_to_go'] = mf_index_to_go
+    mf_th['valid_associations'] = valid_associations
 
     torch.save(bp_th,os.path.join(args.directory,'bp_go.pt'))
     torch.save(cc_th,os.path.join(args.directory,'cc_go.pt'))
     torch.save(mf_th,os.path.join(args.directory,'mf_go.pt'))
 
+    bp_freq = {}
+    for term in bp_go_to_index:
+        bp_freq[term] = freq_tree[term]
+    print("----BP FREQ----")
+    print(bp_freq)
 if __name__ == "__main__":
     args = parser_args()
     asyncio.run(main(args))
