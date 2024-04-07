@@ -3,4 +3,6 @@
 /models/gnn/processed.zip
 /preprocessing/uniref50.sql
 /preprocessing/data
+/preprocessing/data/sp_per_file
+/checkpoints
 feature_matrx.pt

@@ -39,8 +39,11 @@ import ast
 import os
 from torch.utils.data import Dataset,DataLoader,Subset
 import ast
+from transformers import AutoTokenizer, EsmModel
+
+
 class ProteinDataset(Dataset):
-    def __init__ (self,contacts,embedding,go_to_index,go_set,dir,args):
+    def __init__ (self,contacts,embedding,go_to_index,go_set,dir,godag,gosubdag,args):
         super().__init__()
         self.embedding = embedding
         self.contacts = contacts
@@ -50,9 +53,8 @@ class ProteinDataset(Dataset):
         self.unvisited = os.listdir(dir)
         self.tax_to_index = None
         self.args = args
-        self.godag = get_godag("go-basic.obo")
-
-        self.gosubdag = GoSubDag(go_set,self.godag)
+        self.godag = godag
+        self.gosubdag = gosubdag
         self.load_llm()
         # self.load_tax()
 
@@ -60,9 +62,12 @@ class ProteinDataset(Dataset):
         self.tax_to_index  = tax_to_index
 
     def load_llm(self):
+
         self.tokenizer = T5Tokenizer.from_pretrained('Rostlab/prot_t5_xl_half_uniref50-enc', do_lower_case=False)
         self.t5_model = T5EncoderModel.from_pretrained("Rostlab/prot_t5_xl_half_uniref50-enc")
-        self.esm_model, self.esm_alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+        self.esm_tokenizer = AutoTokenizer.from_pretrained("/Users/ambroseling/Desktop/NucleAIse/esm2_t33_650M_UR50D")
+        self.esm_model = EsmModel.from_pretrained("/Users/ambroseling/Desktop/NucleAIse/esm2_t33_650M_UR50D")
+
     
     def get_edge_index_and_features(self,adj_m):
         adj = sparse.csr_matrix(adj_m)
@@ -84,14 +89,20 @@ class ProteinDataset(Dataset):
         return batch_node_embeddings
 
     def get_esm(self,sequences,id=id):
-        sequences =  [((id,sequences))]  
-        batch_converter = self.esm_alphabet.get_batch_converter()
-        # print(batch_converter)
-        batch_labels, batch_strs, batch_tokens = batch_converter(sequences)
-        # batch_lens = (batch_tokens != self.esm_alphabet.padding_idx).sum(1)
-        with torch.no_grad():
-            batch_node_embeddings = self.esm_model(batch_tokens, repr_layers=[33], return_contacts=True)
-        return batch_node_embeddings
+
+        inputs = self.esm_tokenizer(sequences, return_tensors="pt")
+        output = self.esm_model(**inputs,output_attentions=True)
+        return output
+        # sequences =  [((id,sequences))]  
+        # batch_converter = self.esm_alphabet.get_batch_converter()
+        # # print(batch_converter)
+        # batch_labels, batch_strs, batch_tokens = batch_converter(sequences)
+        # # batch_lens = (batch_tokens != self.esm_alphabet.padding_idx).sum(1)
+        # print("BATCH TOKENS SHAPE")
+        # print(batch_tokens.shape)
+        # with torch.no_grad():
+        #     batch_node_embeddings = self.esm_model(batch_tokens, repr_layers=[33], return_contacts=True)
+        # return batch_node_embeddings
     
     def get_target(self,goa: List[str]):
         # print("go to index:")
@@ -127,23 +138,26 @@ class ProteinDataset(Dataset):
         sequences = sample['sequence']
         id = sample['ID']
         goa = sample['goa']
+        if len(sequences) > self.args.node_limit:
+            sequences = sequences[:self.args.node_limit]
         if type(goa) == str:
             goa = ast.literal_eval(goa)
-        contacts = sample['tensor']
         tax = sample['OS']
         if self.embedding == "t5":
             emb = self.get_t5(sequences=sequences)
         elif self.embedding == "esm":
-            emb = self.get_esm(sequences=sequences,id = id)['representations'][33][0,1:len(sequences)+1]
-
+            output = self.get_esm(sequences=sequences)
+            contacts = torch.mean(output.attentions[len(output.attentions)-1].detach(),dim=1)[0][1:-1,1:-1]
+            print(contacts.shape)
+            emb = output.last_hidden_state[0]
         if self.tax_to_index is not None:
             x = (emb,self.tax_to_index(tax))
         else:
             x = emb
         if self.contacts == "esm":
-            contacts = self.get_esm(sequences=sequences, id = id)['contacts'][0]
-        elif self.contacts == "alphafold":
             pass
+        elif self.contacts == "alphafold":
+            contacts = sample['tensor']
         edge_index, edge_attr = self.get_edge_index_and_features(contacts)
         y = self.get_target(goa)
         data =  Data(x = x,edge_index = edge_index,edge_attr=edge_attr,y = y)

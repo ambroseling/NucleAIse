@@ -32,6 +32,11 @@ import esm
 from transformers import BertModel, BertTokenizer
 from transformers import T5Tokenizer, T5Model,T5EncoderModel
 from torch.utils.data import Dataset,DataLoader
+from sklearn.metrics import precision_score
+from sklearn.metrics import recall_score
+from goatools.gosubdag.gosubdag import GoSubDag
+from goatools.base import get_godag
+from goatools.associations import get_tcntobj
 
 PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7
 
@@ -106,49 +111,32 @@ class Pipeline():
         self.go_edge_index = goa[f'{self.ontology}_edge_index']
         self.go_to_index = goa[f'{self.ontology}_go_to_index']
         self.index_to_go = goa[f'{self.ontology}_index_to_go']
-
-
+        self.associations = goa['valid_associations']
+        self.godag = get_godag("go-basic.obo")
+        self.gosubdag = GoSubDag(self.go_set,self.godag)
+        # print(type(self.godag))
+        # termcount = get_tcntobj(self.godag)
+        # # counts = termcount.get_term_freq()
+        # self.weighting = torch.empty((1000,))
+        # num_proteins = len(os.listdir("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file"))
+        # for go in self.go_to_index.keys():
+        #     self.weighting[self.go_to_index[go]] = termcount.get_term_freq(go) #/ (num_proteins- self.gosubdag.go2nt[go].dcnt)
+        # print(self.index_to_go[0])
+        # print("WEIGHTING:")
+        # print(self.weighting)
     def load_data(self):
-        async def create_pool():
-            # conn = sqlite3.connect("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/uniref50.sql")
-            # return conn
-            pool = await asyncpg.create_pool(
-                database="nucleaise",
-                user="postgres",
-                password="ambrose1015",  # Add password if required
-                host="localhost",          # Add host address if not running locally
-                port="5432",          # Add port number if not using default port
-                setup=setup_connection,    # Optionally, you can include setup function
-                min_size=32,
-                max_size=32
-            )
-            return pool
-
-        async def setup_connection(connection):
-            await connection.execute("set search_path to public")
-
-        loop = asyncio.get_event_loop()
-        # create an asyncio loop that runs in the background to
-        # serve our asyncio needs
-        threading.Thread(target=loop.run_forever, daemon=True).start()
-
-        pool = asyncio.run_coroutine_threadsafe(create_pool(), loop=loop).result()
-        tokenizer = T5Tokenizer.from_pretrained('Rostlab/prot_t5_xl_half_uniref50-enc', do_lower_case=False)
-        t5_model = T5EncoderModel.from_pretrained("Rostlab/prot_t5_xl_half_uniref50-enc")
-        esm_model, esm_alphabet = esm.pretrained.esm2_t33_650M_UR50D()
         self.load_taxonomy()
         self.load_goa()
         taxo_to_index = self.taxo_to_index
         if self.args.use_local_postgresql:
-            self.training_dataset = ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,self.args)
-            self.validation_dataset =  ProteinDataset("protein_sp",self.batch_size,80,pool,loop,"esm","esm",tokenizer,t5_model,esm_model,esm_alphabet,taxo_to_index,self.go_to_index,self.go_set,self.args)
+            pass
         else:
             from preprocessing.data_factory_updated import ProteinDataset
             def custom_collate(batch):
                 return Batch.from_data_list(batch)
-            train_protein_dataset = ProteinDataset("esm","esm",self.go_to_index,self.go_set,"/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/test_per_file-2",args)
-            val_protein_dataset = ProteinDataset("esm","esm",self.go_to_index,self.go_set,"/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/test_per_file-2",args)
-            self.training_dataset = DataLoader(train_protein_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0,collate_fn = custom_collate,prefetch_factor=2)
+            train_protein_dataset = ProteinDataset("esm","esm",self.go_to_index,self.go_set,"/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file",self.godag,self.gosubdag,args)
+            val_protein_dataset = ProteinDataset("esm","esm",self.go_to_index,self.go_set,"/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file",self.godag,self.gosubdag,args)
+            self.training_dataset = DataLoader(train_protein_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0,collate_fn = custom_collate)
             # for batch in self.training_dataset:
             #     print('yahooo')
             #     print(batch)
@@ -180,24 +168,28 @@ class Pipeline():
                 output.y = output.y.unsqueeze(-1).view(self.batch_size*self.num_labels,1)
                 output.x = output.x.reshape((self.batch_size*self.num_labels,1))
                 inf_end = time.time()
+                print("Output from model: ")
+                torch.set_printoptions(threshold=10_000)
+                out = 1 / (1 + torch.exp(output.x)) 
+                # print(out)
                 print (f"Forward pass time: {inf_end-inf_start}")
                 loss = self.loss_fn(output.x,output.y.float())
-                acc = self.get_acc(output.x,output.y.float())
+                acc = self.get_acc(out,output.y.float())
+                recall = self.get_recall(out,output.y.float())
+                precision = self.get_precision(out,output.y.float())
+                # fmax = self.get_fmax(output.x,output.y.float())
                 loss.backward()
                 self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
                 b+=1
                 self.training_loss.append(loss.item())
                 self.training_acc.append(acc)
-                print(f"======== Trainin Loss: {loss.item()}  Training Accuracy: {acc} ==========")
+                print(f"Step {b} ======== Trainin Loss: {loss.item()}  Training Accuracy: {acc} Precision: {precision} Recall:{recall} ==========")
 
-            if b%100 == 0:
-                epoch_end = time.time()
-                epoch_time = epoch_end-epoch_start
-                self.save(epoch,self.model,self.avg_val_loss)
-            self.avg_time_per_epoch += epoch_time/self.epoch
-            print(f'===Epoch: {epoch} | Training Loss: {self.avg_train_loss:.3f} | Validation Loss: {self.avg_val_loss:.3f} | Training Acc: {self.avg_train_acc:.3f} | Validation Loss: {self.avg_val_acc:.3f} | Avg inference time: {self.avg_inference_time:.3f} | Time per epoch: {epoch_time:.3f}')
-            
+                if b%100 == 0:
+                    self.save(epoch,self.model,self.avg_val_loss,b)
+                # print(f'Step {b} ===Epoch: {epoch} | Training Loss: {self.avg_train_loss:.3f} | Validation Loss: {self.avg_val_loss:.3f} | Training Acc: {self.avg_train_acc:.3f} | Validation Loss: {self.avg_val_acc:.3f} | Avg inference time: {self.avg_inference_time:.3f} | Time per epoch: {epoch_time:.3f}')
+                
 
         train_end = time.time()
         self.training_time = train_end-train_start
@@ -231,24 +223,36 @@ class Pipeline():
     def get_acc(self,output,target):
 
         output = torch.where(output > 0.5, 1.0, 0.0)
+        print("Proportion of +s predicted:",torch.sum(output == 1))
+        print("Proportion of -s predicted:",torch.sum(output == 0))
+        print("Proportion of +s actual:",torch.sum(target == 1))
+        print("Proportion of -s actual:",torch.sum(target == 0))
 
         acc = torch.sum(output==target) / target.shape[0]
         return acc
-    def get_recall(self,output,target):
-        pass
     def get_precision(self,output,target):
-        pass
-    def get_f1(self,output,target):
-        pass
+        #tp_fp means all the postives that were identified
+        output = torch.where(output > 0.5, 1.0, 0.0)
+        output = output.detach().numpy()
+        precision = precision_score(output,target)
+        return precision
+    def get_recall(self,output,target):
+        #tp_fn means all the labels that 
+        output = torch.where(output > 0.5, 1.0, 0.0)   
+        output = output.detach().numpy()
+        recall = recall_score(output,target)
+        return recall
+    # def get_fmax(self,output,target):
+    #     pass
 
 
-    def save(self,epoch,model,loss):
+    def save(self,epoch,model,loss,step):
         torch.save({
             'epoch':epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'loss': loss,
-            }, f'nucleaise/checkpoints/{self.model_name}_bs{self.batch_size}_lr{self.learning_rate}_ep{epoch}.pth')
+            }, f'/Users/ambroseling/Desktop/NucleAIse/nucleaise/checkpoints/checkpoint-{step}.pt')
         return
     def plot_training_curve(self):
         n = len(self.training_loss) # number of epochs
@@ -274,9 +278,9 @@ def parser_args():
     
     #Training arguments
     parser.add_argument("--model_name",type=str,default="gnn_lm",help="name for the model")
-    parser.add_argument("--num_labels",type=int,default=10,help="The number of GO labels that we are considering")
+    parser.add_argument("--num_labels",type=int,default=1000,help="The number of GO labels that we are considering")
     parser.add_argument("--ontology",type=str,default="bp",choices=['bp','cc','mf'],help="The ontology we want to train with")
-    parser.add_argument("--node_limit",type=int,default=1024,help="The maximum amount of nodes we want to consider per batch")
+    parser.add_argument("--node_limit",type=int,default=678,help="The maximum amount of nodes we want to consider per batch")
     parser.add_argument("--batch_size",type=int,default=2,help="training batch size")
     parser.add_argument("--epochs",type=int,default=1,help="training batch size")
     parser.add_argument("--num_train_steps",type=int,default=10000,help="training batch size")
@@ -288,7 +292,7 @@ def parser_args():
 
     #Model parameters
     parser.add_argument("--channels",type=list,default=[1280,1000,1024],help="training batch size")
-    parser.add_argument("--step_dim",type=list,default=[2,2,2,4],help="dimensions for the residual block")
+    parser.add_argument("--step_dim",type=list,default=[200,200,200,400],help="dimensions for the residual block")
     parser.add_argument("--hidden_state_dim",type=int,default=1024,help="hidden state dimension of the intial embeddings")
     parser.add_argument("--go_proccesing_type",type=str,default="DAGNN",)
     parser.add_argument("--go_units",type=list,default=[50,100],help="training batch size")
