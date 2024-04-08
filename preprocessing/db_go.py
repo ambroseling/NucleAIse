@@ -17,130 +17,6 @@ import ast
 godag = get_godag("go-basic.obo")
 
 
-# def generate_go_graph(go_list):
-#     url = 'https://www.ebi.ac.uk/QuickGO/services/ontology/go/terms/{child_ids}/paths/{parent_ids}?relations=is_a'
-#     nodes = go_list
-#     edges = set() # Set of tuples (parent, child)
-#     bp = 'GO:0008150'
-#     mf = 'GO:0003674'
-#     cc = 'GO:0005575' 
-#     recon_nodes = set()
-#     for go in nodes:
-#         print(go)
-#         response = requests.get(url.format(child_ids=go, parent_ids=bp))
-#         if response.status_code == 200 and response.json()['numberOfHits'] > 0:
-#             path = response.json()['results'][0]
-#             for edge in path:
-#                 recon_nodes.add(edge['parent'])
-#                 edges.add((edge['parent'], edge['child']))
-        
-#         response = requests.get(url.format(child_ids=go, parent_ids=mf))
-#         if response.status_code == 200 and response.json()['numberOfHits'] > 0:
-#             path = response.json()['results'][0]
-#             for edge in path:
-#                 recon_nodes.add(edge['parent'])
-#                 edges.add((edge['parent'], edge['child']))
-
-#         response = requests.get(url.format(child_ids=go, parent_ids=cc))
-#         if response.status_code == 200 and response.json()['numberOfHits'] > 0:
-#             path = response.json()['results'][0]
-#             for edge in path:
-#                 recon_nodes.add(edge['parent'])
-#                 edges.add((edge['parent'], edge['child']))
-
-#     # Tokenize GOs
-#     map = {}
-#     for i, go in enumerate(recon_nodes):
-#         map[go] = i # Node Indexes: [0, len(nodes)-1]
-#     mapped_edges = set() 
-#     go_tensor = torch.empty(2,len(edges),dtype=torch.int)
-
-#     for parent, child in edges:
-#         mapped_edges.add((map[parent], map[child]))
-#         go_tensor[0,i] = map[parent]
-#         go_tensor[1,i] = map[child]
-    
-
-#     return len(nodes), mapped_edges,go_tensor
-
-
-
-
-async def fetch(url, session):
-    async with session.get(url) as response:
-        return await response.json()
-
-async def generate_go_graph(go_list):
-    url_template = 'https://www.ebi.ac.uk/QuickGO/services/ontology/go/terms/{child_ids}/paths/{parent_ids}?relations=is_a'
-    nodes = go_list
-    edges = set()  # Set of tuples (parent, child)
-    recon_nodes = set()
-    bp, mf, cc = 'GO:0008150', 'GO:0003674', 'GO:0005575'
-    async with aiohttp.ClientSession() as session:
-        tasks = []
-        for go in nodes:
-            for parent_id in [bp, mf, cc]:
-                tasks.append(fetch(url_template.format(child_ids=go, parent_ids=parent_id), session))
-        responses = await asyncio.gather(*tasks)
-        print("Gathered all responses...")
-        for response in responses:
-            if 'numberOfHits' in response:
-                if response['numberOfHits'] > 0:
-                    path = response['results'][0]
-                    for edge in path:
-                        recon_nodes.add(edge['parent'])
-                        recon_nodes.add(edge['child'])
-                        edges.add((edge['parent'], edge['child']))
-
-    # Tokenize GOs
-    print('Tokenizing GOs...')
-    go_to_index = {go: i for i, go in enumerate(recon_nodes)}
-    index_to_go = {i: go for i,go in enumerate(recon_nodes)}
-    print('Constructing GO tree...')
-    mapped_edges = {(go_to_index[parent], go_to_index[child]) for parent, child in edges}
-    go_tensor = torch.tensor(list(mapped_edges)).t().to(torch.int)
-
-    return len(recon_nodes), go_to_index,index_to_go , go_tensor
-
-
-
-
-
-
-# Function to connect to PostgreSQL database
-def connect_to_postgres(dbname, user,password,host,port):
-    try:
-        conn = psycopg2.connect(
-            dbname=dbname,
-            user=user,
-            password=password,
-            host=host,
-            port=port
-        )
-        return conn
-    except psycopg2.Error as e:
-        print("Error connecting to PostgreSQL database:", e)
-        return None
-
-# Function to fetch rows and extract lists
-def fetch_rows_and_extract_lists(conn, table_name, go_set,associations):
-    try:
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT id,goa FROM {table_name};")
-        rows = cursor.fetchall()
-        print("Going through all the rows in the database")
-        for row in tqdm(rows):
-            accession_id = row[0]
-            ids_list = row[1]  # Assuming the list is in the first column
-            protein_goa = set()
-            for id in ids_list:
-                id = id.strip("'")
-                go_set.append(id)
-                protein_goa.add(id)
-            associations[accession_id] = protein_goa
-    except psycopg2.Error as e:
-        print("Error fetching rows from PostgreSQL:", e)
-
 def load(dir,go_set,associations):
     for file in tqdm(os.listdir(dir)):
         pt = torch.load(os.path.join(dir,file))
@@ -153,52 +29,6 @@ def load(dir,go_set,associations):
             protein_goa.add(goa)
 
         associations[accession_id] = protein_goa
-
-def topsort(edge_index,graph_size):
-    node_ids = np.arange(graph_size,dtype=int)
-    node_order = np.zeros(graph_size,dtype=int)
-    unevaluated_nodes = np.ones(graph_size,dtype=bool)
-    parent_nodes = edge_index[0]
-    child_nodes = edge_index[1]
-    n = 0
-    while unevaluated_nodes.any():
-        unevaluated_mask = unevaluated_nodes[parent_nodes]
-        unready_children = child_nodes[unevaluated_mask]
-        nodes_to_evaluate = unevaluated_nodes & ~np.isin(node_ids,unready_children)
-        node_order[nodes_to_evaluate] = n
-        unevaluated_nodes[nodes_to_evaluate] = False
-        n+=1
-    return torch.from_numpy(node_order).long()
-
-def topsort_with_frequency_and_layers(frequency_dict, edge_index, layer_index, K):
-    # Sort nodes based on frequency in descending order
-    sorted_nodes = sorted(frequency_dict.keys(), key=lambda x: frequency_dict[x], reverse=True)
-    
-    # Initialize a set to keep track of selected nodes
-    selected_nodes = set()
-    
-    # Start from the root node
-    root_node = layer_index.index(0)
-    selected_nodes.add(root_node)
-    
-    # Add nodes based on layer index and frequency
-    for node in sorted_nodes:
-        if node != root_node:
-            parent_node = edge_index[0][node]
-            if parent_node in selected_nodes:
-                selected_nodes.add(node)
-                if len(selected_nodes) >= K:
-                    break
-    
-    # Create the edge index for the new subgraph
-    new_edge_index = []
-    for i, j in zip(edge_index[0], edge_index[1]):
-        if i in selected_nodes and j in selected_nodes:
-            new_edge_index.append([selected_nodes.index(i), selected_nodes.index(j)])
-    
-    # Return the list of selected nodes and the edge index of the new subgraph
-    return list(selected_nodes), np.array(new_edge_index).T
-
 
 def parser_args():
     parser = argparse.ArgumentParser(description="")
@@ -221,11 +51,13 @@ async def main(args):
     bp_th = {}
     mf_th = {}
     cc_th = {}
+    #Step 1: load all the GOAs into go_set and associations, 
+    #go_set is just a collection of all the GOAs we have from our dataset, note its not a set so there are repeated GOAs
+    #associations is a dict of keys being the protien ID and the value is the list of GOAs, passed to GoSubDag data structure
     load("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file",go_set,associations)
-    # conn = connect_to_postgres(args.dbname, args.user,args.password,args.host,args.port)
-    # fetch_rows_and_extract_lists(conn,args.tablename,go_set,associations)
+
     valid_associations = associations.copy()
-    #MP09823, goa: ['GO:008567']
+    #Step 2: make sure there are no GOAs inside associations where it doesnt exist in the true GO tre (from go_basic.obo)
     for protein, terms in associations.items():
         terms_copy = terms.copy()  # Create a copy of the set
         for term in terms_copy:
@@ -235,18 +67,16 @@ async def main(args):
         for term in terms:
             if term not in godag:
                 print("There are still terms not present in DAG!")
-    # print(f"THere are {len(set(go_set))} unqiue go terms!")
+    
+    #Step 3: define a gosubdag data strcuture (from goatools)
     gosubdag = GoSubDag(go_set,godag)
-    #GOTerm
 
-    # for go,go_info in gosubdag.go2obj.items():
-    #     if go_info.depth == 0 or go_info.level == 0:
-    #         print(go_info)
-    #         print(gosubdag.go2nt[go].dcnt)
 
+    #define how we do the selection of labels using DFS
     def dfs(go_term, frequency_dict, visited, top_terms,freq_tree):
         visited.add(go_term)
         if go_term.id in gosubdag.go2nt and go_term.id in freq_tree:
+            #notice hear in the past I was using descendant counts to sort all the children of a given node
             top_terms.append((go_term,freq_tree[go_term.id]))
         top_terms.sort(key=lambda x: x[1], reverse=True)
         for child in go_term.children:
@@ -254,20 +84,27 @@ async def main(args):
                 dfs(child, gosubdag.go2nt, visited, top_terms,freq_tree)
         return top_terms[:args.max_goas]
 
+    #Define the root nodes (BP,CC,MF)
     bp = gosubdag.go2obj['GO:0008150']
     cc = gosubdag.go2obj['GO:0005575']
     mf = gosubdag.go2obj['GO:0003674']
+
+    #Step 4: create a function that counts the correct frequencies of the GOAs, considering ancestors
+    # this goes through all the proteins in the associations dict.
+    # gets the *GOA list* for that protein
+    # for each GOA in that list, get its ancestors and add it to a set
+    # do that for all the GOAs in that *GOA list*
+    # then you coudl get a set that says all the GOAs including ancestors that belong to this protein
+
+    #then you go through all these GOAs and add it to a dictionary to count its frequency
     def count_freq(associations):
         go_freq = {}
         for protein in associations:
-            # print("protein: ",protein)
-            # print("terms: ",associations[protein])
             go_terms = associations[protein]
             go_terms_set = set()
             for term in go_terms:
                 go_terms_set.update(term)
                 go_terms_set.update(list(gosubdag.go2obj[term].get_all_parents()))
-            # print('go terms with ancestors: ',go_terms_set)
             for term in go_terms_set:
                 if term in go_freq:
                     go_freq[term] += 1  
@@ -275,11 +112,12 @@ async def main(args):
                     go_freq[term] = 1
         print("Len of go_freq: ",len(go_freq))
         return go_freq
+    
+    # Call step 4 then call the dfs to find the topK labels based on the frequency counts constructed in step 4
     freq_tree = count_freq(valid_associations)
     bp_ancestors = {}
     cc_ancestors = {}
     mf_ancestors = {}
-    #GO:008567 -> [GO:009674,GO:004567]
     visited = set() 
     top_terms = []  
     top_bp = dfs(bp, gosubdag.go2nt, visited, top_terms,freq_tree)
@@ -290,13 +128,15 @@ async def main(args):
     top_terms = []   
     top_mf = dfs(mf, gosubdag.go2nt, visited, top_terms,freq_tree)
 
-
+    # Step 6: construct the index to label and label to index mappings
     bp_go_to_index = {term[0].id: index for index, term in enumerate(top_bp)}
     bp_index_to_go = {index: term[0].id  for index, term in enumerate(top_bp)}
     cc_go_to_index = {term[0].id: index for index, term in enumerate(top_cc)}
     cc_index_to_go = {index: term[0].id for index, term in enumerate(top_cc)}
     mf_go_to_index = {term[0].id: index for index, term in enumerate(top_mf)}
     mf_index_to_go = {index: term[0].id for index, term in enumerate(top_mf)}
+   
+   #Step 7: this function constructs the edge index lists (for GO graph processing)
     def create_edge_index(top_list,go_to_index,ancestors):
         src_index = []
         target_index = []
@@ -312,16 +152,13 @@ async def main(args):
         return torch.tensor([src_index,target_index])
     
 
-
+    #Step 8: construct the edge index for all BP,CC,MF and save everything to the pt files
     bp_edge_index = create_edge_index(top_bp, bp_go_to_index,bp_ancestors)
     bp_th['go_set'] = go_set
     bp_th['bp_edge_index'] = bp_edge_index
     bp_th['bp_go_to_index'] = bp_go_to_index
     bp_th['bp_index_to_go'] = bp_index_to_go
     bp_th['valid_associations'] = valid_associations
-
-    # print(bp_index_to_go)
-
 
     cc_edge_index = create_edge_index(top_cc, cc_go_to_index,cc_ancestors)
     cc_th['go_set'] = go_set
@@ -341,11 +178,35 @@ async def main(args):
     torch.save(cc_th,os.path.join(args.directory,'cc_go.pt'))
     torch.save(mf_th,os.path.join(args.directory,'mf_go.pt'))
 
+
+    #THIS IS JUST SOME TEST TO CHECK WHAT DOES THE FREQUENCIES LOOK LIKE FOR ALL THE GOAS IN OUR DATASET
     bp_freq = {}
     for term in bp_go_to_index:
         bp_freq[term] = freq_tree[term]
     print("----BP FREQ----")
-    print(bp_freq)
+
+    #ANOTGER TEST THAT GOES THROUGH ALL THE PROTEINS AND SEE HWO MANY POSITIVE INSTANCES THERE ARE BASED ON THE GOAS WE PICKED
+    for protein in os.listdir("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file"):
+        protein = torch.load(os.path.join("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file",protein))
+        goa = protein['goa']
+        truth = []
+        target = set()
+        goa = ast.literal_eval(goa)
+        for go in goa: 
+            if go in gosubdag.go2obj:
+                target.add(go.strip("'"))
+                ancestors = list(gosubdag.go2obj[go.strip("'")].get_all_parents())
+                target.update(ancestors)
+
+        for go in bp_go_to_index:
+            if go in target:
+                truth.append(bp_go_to_index[go])
+  
+        truth = torch.tensor(truth).unsqueeze(0)
+        truth = torch.zeros(truth.size(0), len(bp_go_to_index)).scatter_(1, truth, 1.) 
+        print(f"There are {torch.sum(truth)} positives in this protein")
+
+
 if __name__ == "__main__":
     args = parser_args()
     asyncio.run(main(args))
