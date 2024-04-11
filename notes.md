@@ -68,10 +68,26 @@ There are various main types of GNNs and some of these variants are designed spe
         H^{(k)} = \sigma{(\tilde{A}H^{(k-1)}W^{(k)})} \\
         \tilde{A} = (D+I)^{\frac{-1}{2}}(I+A)(D+I)^{\frac{-1}{2}}
         $$
+        - normalization constant is calculated by $A^{\frac{-1}{2}}DA^{\frac{-1}{2}}$
     - Oversmoothing
         - oversmoothing refers to when node features get too similar
         - oversmoothing happens when you stack a bunch of GNN layers, as it is the same idea as applying a **low pass convolutional filter** again and again
         - Key point: mutliplyign a signal by higher powers of $A_{sym}$ = applying a conv filter on the lowest frequencies or eigenvalues of $L_{sym}$ and this simply converges all node representations to constant values 
+    - GCN Sample code:
+    ```python
+    class GCN(nn.Module):
+    def __init__(self,in_channels,out_channels):
+        super(GCN,self).__init__()
+        self.W = nn.Linear(in_channels,out_channels)
+        self.activation = nn.ReLU()
+    def forward(self,X,A):
+        I = torch.eye(len(A))
+        A = torch.tensor(A)+I
+        degrees = torch.sum(torch.tensor(A),dim=1)
+        D = torch.sqrt(torch.inverse(torch.diag(degrees)))
+        return self.activation(self.W(torch.matmul(torch.matmul(torch.matmul(D,A),D),X)))
+
+    ```
 
 
 
@@ -88,7 +104,10 @@ There are various main types of GNNs and some of these variants are designed spe
     m_{\mathcal{N}(u)} = \Sigma_{v \in \mathcal{u}} \alpha_{u,v} h_v
     $$
     - We can also take the idea of multiple attention heads from transformers (so its like having K sets of attention coefficients)
-    
+    - Sample code for Graph Attention:
+    ```
+
+    ```
 3) Equivariance Graph Neural Networks:
 - TBD
 
@@ -156,9 +175,114 @@ There are various main types of GNNs and some of these variants are designed spe
     - now that we established what self attention is, multi head self attention just adds 2 things:
         1) you split the data in the channel dimension 
         2) you have $W_i^q, W_i^k \in R^{d \times d_{k/h}}$ which is a mapping from inpyt embeddings of L x d to Q,K,V matrices $, W_i^v \in R^{d \times d_{v/h}}$ is an output linear transformation
-    
+
+Sample code for Multi-Head Self Attention:
+```python
+class Attention(nn.Module):
+    def __init__(self,heads,hidden_dim,dropout):
+        self.heads = heads
+        self.hidden_dim = hidden_dim
+        self.head_dim = self.hidden_dim // heads
+        self.softmax = nn.Softmax(dim=1)
+        self.dropout = nn.Dropout(p=dropout)
+        self.to_qkv = nn.Linear(hidden_dim,hidden_dim*3)
+        self.to_proj = nn.Linear(hidden_dim,hidden_dim)
+        self.q_norm = nn.Layernorm(hidden_dim,dim=1)
+        self.k_norm = nn.Layernorm(hidden_dim,dim=1)
+    def forward(self,x,mask):
+        D = self.head_dim
+        H = self.heads
+
+        #Step 1: lets get the shape of X (our data samples)
+        B,L,C = x.shape
+
+        #B is batch size, L is sequence length, C is hidden dimension or channel
+        #Step 2: lets apply a linear transformation to x so that we can use weight matrices to map X to Q,K,V
+        q,k,v = self.to_qkv(x).reshape((B,L,3,H,D)).permute(2,0,3,1,4).chunk(3,dim=0)
+        # after to_qkv : (B,L,3D)
+        # after reshape: (B,L,3,H,D)
+        # after permute: (3,B,H,L,D)
+        # then we chunk so that q k v is (B,H,L,D) each
+
+        #Step 3: normalization
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+
+        #Step 4: compute attention weights
+        #attn computation: (B,H,L,D) x (B,H,D,L) => (B,H,L,L)
+        attn = q @ k.transpose(-2,-1) 
+        attn = self.softmax(x / self.head_dim**-0.5)
+        attn = attn + mask if mask is not None else attn
+        out = attn @ v # (B,H,L,L) x (B,H,L,D) => (B,H,L,D)
+
+        #Step 5: final linear transformation on out
+        out = self.proj(out)
+        #(B,H,L,D)  => (B,L,H,D) => (B,L,C)
+        out = out.transpose(1,2).reshape((B,L,C))
+        out = self.dropout(out)
+        return out
+``` 
+
+
+### Cross Attention mechanism
+Cross attention mechnanism works pretty much the same to the regular self attention but except that the key and value is the target info while query is the conditioning info.
+Lets say im trying to translate English to French and im using a transformer, during training French goes into decoder, English to encoder, English is the conditioning info (not the thing you want to predict), and French would be the target modality. So we can say that the French word generation was **conditioned on** the English.
+
+Or if im trying to generate images. My transformer (or vision transformer but it works the exact same) takes in image tokens and i want the model to learn associations between the image and the text, so the images are the target info (i want to generate images) while the text would be the conditioning info, the generation or generated images are **conditioned on** the text.
+
+
+Sample code for Multi-Head Cross Attention:
+```python
+class CrossAttention(nn.Module):
+    def __init__(self,heads,hidden_dim,dropout):
+        self.heads = heads
+        self.hidden_dim = hidden_dim
+        self.head_dim = self.hidden_dim // heads
+        self.softmax = nn.Softmax(dim=1)
+        self.dropout = nn.Dropout(p=dropout)
+        self.to_q = nn.Linear(hidden_dim,hidden_dim)
+        self.to_kv = nn.Linear(hidden_dim,hidden_dim*2)
+
+        self.to_proj = nn.Linear(hidden_dim,hidden_dim)
+        self.q_norm = nn.Layernorm(hidden_dim,dim=1)
+        self.k_norm = nn.Layernorm(hidden_dim,dim=1)
+    def forward(self,x,cond,mask):
+        D = self.head_dim
+        H = self.heads
+
+        #Step 1: lets get the shape of X and cond (our data samples, conditioning modality)
+        B,L,C = x.shape
+        _,S,_ = cond.shape
+
+        #B is batch size, L is sequence length, C is hidden dimension or channel
+        #B and C are the same for cond, S is the length of the conditioning token sequence
+
+        #Step 2: lets apply a linear transformation to x so that we can use weight matrices to map X to Q,K,V
+        q = self.to_q(x).reshape((B,L,H,D)).permute(0,2,1,3)
+        k,v = self.to_kv(x).reshape((B,L,2,H,D)).permute(2,0,3,1,4).chunk(3,dim=0)
+
+        #Step 3: normalization
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+
+        #Step 4: compute attention weights
+        #attn computation: (B,H,L,D) x (B,H,D,S) => (B,H,L,S)
+        attn = q @ k.transpose(-2,-1) 
+        attn = self.softmax(x / self.head_dim**-0.5)
+        attn = attn + mask if mask is not None else attn
+        out = attn @ v # (B,H,L,S) x (B,H,S,D) => (B,H,L,D)
+
+        #Step 5: final linear transformation on out
+        out = self.proj(out)
+        #(B,H,L,D)  => (B,L,H,D) => (B,L,C)
+        out = out.transpose(1,2).reshape((B,L,C))
+        out = self.dropout(out)
+        return out
+``` 
+
+
 ### Applications in PFP
-- TBD
+- Protein Language Models
 
 
 ### Challenges
