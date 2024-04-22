@@ -63,13 +63,15 @@ class ProteinDataset(Dataset):
 
     def load_llm(self):
 
-        self.tokenizer = T5Tokenizer.from_pretrained('Rostlab/prot_t5_xl_half_uniref50-enc', do_lower_case=False)
-        self.t5_model = T5EncoderModel.from_pretrained("Rostlab/prot_t5_xl_half_uniref50-enc")
-        self.esm_tokenizer = AutoTokenizer.from_pretrained("/Users/ambroseling/Desktop/NucleAIse/esm2_t33_650M_UR50D")
-        self.esm_model = EsmModel.from_pretrained("/Users/ambroseling/Desktop/NucleAIse/esm2_t33_650M_UR50D")
+        self.tokenizer = T5Tokenizer.from_pretrained('/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/prot_t5_xl_half_uniref50-enc', do_lower_case=False)
+        self.t5_model = T5EncoderModel.from_pretrained("/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/prot_t5_xl_half_uniref50-enc")
+        self.esm_tokenizer = AutoTokenizer.from_pretrained("/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/esm2_t33_650M_UR50D")
+        self.esm_model = EsmModel.from_pretrained("/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/esm2_t33_650M_UR50D")
 
     
     def get_edge_index_and_features(self,adj_m):
+        num_ones = torch.sum(adj_m == 1)
+        print(f"Num of ones for : {adj_m.shape} is {num_ones}")
         adj = sparse.csr_matrix(adj_m)
         edge_index = from_scipy_sparse_matrix(adj)
 
@@ -140,6 +142,9 @@ class ProteinDataset(Dataset):
         goa = sample['goa']
         if len(sequences) > self.args.node_limit:
             sequences = sequences[:self.args.node_limit]
+            alphafold = sample['tensor'][:self.args.node_limit,:self.args.node_limit]
+        else:
+            alphafold = sample['tensor']
         if type(goa) == str:
             goa = ast.literal_eval(goa)
         tax = sample['OS']
@@ -157,7 +162,8 @@ class ProteinDataset(Dataset):
         if self.contacts == "esm":
             pass
         elif self.contacts == "alphafold":
-            contacts = sample['tensor']
+            contacts = alphafold
+            
         edge_index, edge_attr = self.get_edge_index_and_features(contacts)
         y = self.get_target(goa)
         data =  Data(x = x,edge_index = edge_index,edge_attr=edge_attr,y = y)

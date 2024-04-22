@@ -1,7 +1,7 @@
 import sys
 import os
 from pathlib import Path
-sys.path.append('/Users/ambroseling/Desktop/NucleAIse/nucleaise')
+sys.path.append('/home/tiny_ling/projects/nucleaise/')
 sys.path.insert(0, str(Path(__file__).parent))
 import sqlite3
 import torch
@@ -9,6 +9,7 @@ import numpy as np
 import torch.nn as nn
 import math
 import argparse
+import csv
 import json
 import time
 import asyncio
@@ -81,7 +82,8 @@ class Pipeline():
         
 
         #loss fn & optimizer
-        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.pos_weight = torch.empty(self.num_labels,)
+        self.loss_fn = nn.BCEWithLogitsLoss(pos_weight = self.pos_weight)
 
 
         #data variabels
@@ -93,6 +95,19 @@ class Pipeline():
         self.ontology = args.ontology
         self.node_limit = args.node_limit
         self.args = args
+
+    def load_checkpoint(self):
+        latest_step = 0
+        for file in os.listdir("/home/tiny_ling/projects/nucleaise/checkpoints"):
+            #basename returns the final component of the path
+            step = int(file.split('.')[0].split('-')[1])
+            if step > latest_step:
+                latest_step = step
+        self.latest_step = latest_step
+        checkpoint = torch.load(f"/home/tiny_ling/projects/nucleaise/checkpoints/checkpoint-{latest_step}.pt")
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
 
     def count_parameters(self,model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -106,7 +121,7 @@ class Pipeline():
                 self.taxo_to_index = json.loads(json_file)
 
     def load_goa(self):
-        goa = torch.load(f'/Users/ambroseling/Desktop/NucleAIse/nucleaise/pipeline/config/{self.ontology}_go.pt')
+        goa = torch.load(f'/home/tiny_ling/projects/nucleaise/pipeline/config/{self.ontology}_go.pt')
         self.go_set = goa['go_set']
         self.go_edge_index = goa[f'{self.ontology}_edge_index']
         self.go_to_index = goa[f'{self.ontology}_go_to_index']
@@ -114,16 +129,21 @@ class Pipeline():
         self.associations = goa['valid_associations']
         self.godag = get_godag("go-basic.obo")
         self.gosubdag = GoSubDag(self.go_set,self.godag)
-        # print(type(self.godag))
-        # termcount = get_tcntobj(self.godag)
-        # # counts = termcount.get_term_freq()
-        # self.weighting = torch.empty((1000,))
-        # num_proteins = len(os.listdir("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file"))
-        # for go in self.go_to_index.keys():
-        #     self.weighting[self.go_to_index[go]] = termcount.get_term_freq(go) #/ (num_proteins- self.gosubdag.go2nt[go].dcnt)
-        # print(self.index_to_go[0])
-        # print("WEIGHTING:")
-        # print(self.weighting)
+        self.load_goa_weighting()
+
+    def load_goa_weighting(self):
+        weighting = {}
+        with open('/home/tiny_ling/projects/nucleaise/IA/IA.txt') as file:
+            tsv_file = csv.reader(file, delimiter="\t")
+            # printing data line by line
+            for line in tsv_file:
+                term = line[0]
+                weight = float(line[1]) if float(line[1]) > 0.0 else 0
+                weighting[term] = weight
+        for term in self.go_to_index:
+            self.pos_weight[self.go_to_index[term]] = weighting[term]
+        
+
     def load_data(self):
         self.load_taxonomy()
         self.load_goa()
@@ -134,8 +154,8 @@ class Pipeline():
             from preprocessing.data_factory_updated import ProteinDataset
             def custom_collate(batch):
                 return Batch.from_data_list(batch)
-            train_protein_dataset = ProteinDataset("esm","esm",self.go_to_index,self.go_set,"/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file",self.godag,self.gosubdag,args)
-            val_protein_dataset = ProteinDataset("esm","esm",self.go_to_index,self.go_set,"/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file",self.godag,self.gosubdag,args)
+            train_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,"/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/sp_per_file",self.godag,self.gosubdag,args)
+            val_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,"/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/sp_per_file",self.godag,self.gosubdag,args)
             self.training_dataset = DataLoader(train_protein_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0,collate_fn = custom_collate)
             # for batch in self.training_dataset:
             #     print('yahooo')
@@ -152,9 +172,11 @@ class Pipeline():
         train_start = time.time()
         self.optimizer = torch.optim.Adam(self.model.parameters(),lr=self.learning_rate)
 
+        self.load_checkpoint()
+
         for epoch in range(self.epoch):
             epoch_start = time.time()
-            b = 0
+            b = 0 if self.latest_step is None else self.latest_step
             for batch in self.training_dataset:
                 print(batch)
                 batch.x = batch.x.type(torch.float32)
@@ -165,20 +187,20 @@ class Pipeline():
             
                 inf_start = time.time()
                 output = self.model(batch,self.go_edge_index)
-                output.y = output.y.unsqueeze(-1).view(self.batch_size*self.num_labels,1)
-                output.x = output.x.reshape((self.batch_size*self.num_labels,1))
+                y_target = output.y.unsqueeze(-1).view(self.batch_size,self.num_labels).cpu()
+                y_pred = output.x.reshape((self.batch_size,self.num_labels)).cpu()
                 inf_end = time.time()
                 print("Output from model: ")
                 torch.set_printoptions(threshold=10_000)
-                out = 1 / (1 + torch.exp(output.x)) 
-                # print(out)
                 print (f"Forward pass time: {inf_end-inf_start}")
-                loss = self.loss_fn(output.x,output.y.float())
-                acc = self.get_acc(out,output.y.float())
-                recall = self.get_recall(out,output.y.float())
-                precision = self.get_precision(out,output.y.float())
-                # fmax = self.get_fmax(output.x,output.y.float())
+                loss = self.loss_fn(y_pred,y_target)
                 loss.backward()
+
+                y_pred = 1 / (1 + torch.exp(-y_pred)) 
+                acc = self.get_acc(y_pred,y_target)
+                recall = self.get_recall(y_pred,y_target)
+                precision = self.get_precision(y_pred,y_target)
+                # fmax = self.get_fmax(output.x,y_target)
                 self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
                 b+=1
@@ -233,14 +255,17 @@ class Pipeline():
     def get_precision(self,output,target):
         #tp_fp means all the postives that were identified
         output = torch.where(output > 0.5, 1.0, 0.0)
-        output = output.detach().numpy()
-        precision = precision_score(output,target)
+        output = output.detach().cpu().numpy() 
+        target = target.detach().cpu().numpy() 
+
+        precision = precision_score(output,target,average="micro")
         return precision
     def get_recall(self,output,target):
         #tp_fn means all the labels that 
         output = torch.where(output > 0.5, 1.0, 0.0)   
-        output = output.detach().numpy()
-        recall = recall_score(output,target)
+        output = output.detach().cpu().numpy() 
+        target = target.detach().cpu().numpy() 
+        recall = recall_score(output,target,average="micro")
         return recall
     # def get_fmax(self,output,target):
     #     pass
@@ -252,7 +277,7 @@ class Pipeline():
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'loss': loss,
-            }, f'/Users/ambroseling/Desktop/NucleAIse/nucleaise/checkpoints/checkpoint-{step}.pt')
+            }, f'/home/tiny_ling/projects/nucleaise/checkpoints/checkpoint-{step}.pt')
         return
     def plot_training_curve(self):
         n = len(self.training_loss) # number of epochs
@@ -278,7 +303,7 @@ def parser_args():
     
     #Training arguments
     parser.add_argument("--model_name",type=str,default="gnn_lm",help="name for the model")
-    parser.add_argument("--num_labels",type=int,default=1000,help="The number of GO labels that we are considering")
+    parser.add_argument("--num_labels",type=int,default=100,help="The number of GO labels that we are considering")
     parser.add_argument("--ontology",type=str,default="bp",choices=['bp','cc','mf'],help="The ontology we want to train with")
     parser.add_argument("--node_limit",type=int,default=678,help="The maximum amount of nodes we want to consider per batch")
     parser.add_argument("--batch_size",type=int,default=2,help="training batch size")
@@ -287,12 +312,12 @@ def parser_args():
     parser.add_argument("--num_workers",type=int,default=4,help="num workers")
     parser.add_argument("--prefetch_factor",type=int,default=4,help="numworkers*prefetch_factor number of batches gets prefetched")
     parser.add_argument("--learning_rate",type=float,default=1e-4,help="learning rate")
-    parser.add_argument("--device",type=str,default='cpu',help="training batch size")
+    parser.add_argument("--device",type=str,default='cuda',help="training batch size")
     parser.add_argument("--use_local_postgresql",type=bool,default=False,help="training batch size")
 
     #Model parameters
     parser.add_argument("--channels",type=list,default=[1280,1000,1024],help="training batch size")
-    parser.add_argument("--step_dim",type=list,default=[200,200,200,400],help="dimensions for the residual block")
+    parser.add_argument("--step_dim",type=list,default=[20,20,20,40],help="dimensions for the residual block")
     parser.add_argument("--hidden_state_dim",type=int,default=1024,help="hidden state dimension of the intial embeddings")
     parser.add_argument("--go_proccesing_type",type=str,default="DAGNN",)
     parser.add_argument("--go_units",type=list,default=[50,100],help="training batch size")
