@@ -1,8 +1,7 @@
-import psycopg2
 import requests
 import torch
+import json
 import asyncio
-import aiohttp
 import numpy as np
 import collections
 import argparse
@@ -28,18 +27,21 @@ def load(dir,go_set,associations):
             go_set.append(goa)
             protein_goa.add(goa)
 
-        associations[accession_id] = protein_goa
-
+        associations[accession_id] = list(protein_goa)
+    with open("/home/tiny_ling/projects/nucleaise/preprocessing/associations.json","w") as outfile:
+        json.dump(associations,outfile)
+        
 def parser_args():
     parser = argparse.ArgumentParser(description="")
-    parser.add_argument("--max_goas",type=int,default=1000,help="")
+    parser.add_argument("--max_goas",type=int,default=100,help="")
     parser.add_argument("--tablename",type=str,default="uniref50_protein",help="")
     parser.add_argument("--dbname",type=str,default="uniref50",help="")
     parser.add_argument("--user",type=str,default="postgres",help="")
     parser.add_argument("--password",type=str,default="ambrose1015",help="")
     parser.add_argument("--host",type=str,default="localhost")
     parser.add_argument("--port",type=str,default="5432")
-    parser.add_argument("--directory",type=str,default="/Users/ambroseling/Desktop/NucleAIse/nucleaise/pipeline/config")
+    parser.add_argument("--directory",type=str,default="/home/tiny_ling/projects/nucleaise/pipeline/config")
+    parser.add_argument("--reload",type=bool,default=False)
 
     args = parser.parse_args()
     return args
@@ -54,12 +56,17 @@ async def main(args):
     #Step 1: load all the GOAs into go_set and associations, 
     #go_set is just a collection of all the GOAs we have from our dataset, note its not a set so there are repeated GOAs
     #associations is a dict of keys being the protien ID and the value is the list of GOAs, passed to GoSubDag data structure
-    load("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file",go_set,associations)
+    if args.reload:
+        load("/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/sp_per_file",go_set,associations)
+    else:
+        with open('/home/tiny_ling/projects/nucleaise/preprocessing/associations.json') as json_file:
+            associations = json.load(json_file)
+
 
     valid_associations = associations.copy()
     #Step 2: make sure there are no GOAs inside associations where it doesnt exist in the true GO tre (from go_basic.obo)
     for protein, terms in associations.items():
-        terms_copy = terms.copy()  # Create a copy of the set
+        terms_copy = set(terms.copy())  # Create a copy of the set
         for term in terms_copy:
             if term not in godag:
                 valid_associations[protein].remove(term)
@@ -89,6 +96,8 @@ async def main(args):
     cc = gosubdag.go2obj['GO:0005575']
     mf = gosubdag.go2obj['GO:0003674']
 
+    print("===== Length of all children of BP =====")
+    print(len(bp.get_all_children()))
     #Step 4: create a function that counts the correct frequencies of the GOAs, considering ancestors
     # this goes through all the proteins in the associations dict.
     # gets the *GOA list* for that protein
@@ -136,6 +145,12 @@ async def main(args):
     mf_go_to_index = {term[0].id: index for index, term in enumerate(top_mf)}
     mf_index_to_go = {index: term[0].id for index, term in enumerate(top_mf)}
    
+    # print("TOP 10 BP TERM FREQ:")
+    # for term,freq in top_bp:
+    #     print(term.id)
+    #     print(f"Term freq: {freq}")
+
+
    #Step 7: this function constructs the edge index lists (for GO graph processing)
     def create_edge_index(top_list,go_to_index,ancestors):
         src_index = []
@@ -181,13 +196,15 @@ async def main(args):
 
     #THIS IS JUST SOME TEST TO CHECK WHAT DOES THE FREQUENCIES LOOK LIKE FOR ALL THE GOAS IN OUR DATASET
     bp_freq = {}
-    for term in bp_go_to_index:
-        bp_freq[term] = freq_tree[term]
-    print("----BP FREQ----")
+
+    print("================== GO:0022403 and its parents: ==================")
+    print(gosubdag.go2obj['GO:0022403'].get_all_parents())
+
 
     #ANOTGER TEST THAT GOES THROUGH ALL THE PROTEINS AND SEE HWO MANY POSITIVE INSTANCES THERE ARE BASED ON THE GOAS WE PICKED
-    for protein in os.listdir("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file"):
-        protein = torch.load(os.path.join("/Users/ambroseling/Desktop/NucleAIse/nucleaise/preprocessing/data/sp_per_file",protein))
+    protein_over_50 = 0
+    for protein in os.listdir("/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/sp_per_file"):
+        protein = torch.load(os.path.join("/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/sp_per_file",protein))
         goa = protein['goa']
         truth = []
         target = set()
@@ -198,14 +215,45 @@ async def main(args):
                 ancestors = list(gosubdag.go2obj[go.strip("'")].get_all_parents())
                 target.update(ancestors)
 
-        for go in bp_go_to_index:
-            if go in target:
-                truth.append(bp_go_to_index[go])
-  
-        truth = torch.tensor(truth).unsqueeze(0)
-        truth = torch.zeros(truth.size(0), len(bp_go_to_index)).scatter_(1, truth, 1.) 
-        print(f"There are {torch.sum(truth)} positives in this protein")
+        terms_in_bp = 0
+        terms_in_cc = 0
+        terms_in_mf = 0
+        root_nodes = ['GO:0008150','GO:0005575','GO:0003674']
 
+        for term in bp.get_all_children():
+            if term in target:
+                terms_in_bp +=1
+        for term in cc.get_all_children():
+            if term in target:
+                terms_in_cc +=1               
+        for term in mf.get_all_children():
+            if term in target:
+                terms_in_mf +=1
+        if root_nodes[0] in target:
+            terms_in_bp +=1
+        if root_nodes[1] in target:
+            terms_in_cc +=1  
+        if root_nodes[2] in target:
+            terms_in_mf +=1  
+
+        print("================== PROTEIN ==================")    
+        print(f"This protein has {len(target)} labels (including ancestors)")           
+        print(f"BP: Out of {len(bp.get_all_children())}, {terms_in_bp} are present or {100*(terms_in_bp/len(bp.get_all_children()))}% for this protein")
+        print(f"CC: Out of {len(cc.get_all_children())}, {terms_in_cc} are present or {100*(terms_in_cc/len(cc.get_all_children()))}% for this protein")
+        print(f"MF: Out of {len(mf.get_all_children())}, {terms_in_mf} are present or {100*(terms_in_cc/len(mf.get_all_children()))}% for this protein")
+
+        
+        # for go in top_bp:
+        #     if go[0].id in target:
+        #         truth.append(bp_go_to_index[go[0].id])
+  
+        # truth = torch.tensor(truth).unsqueeze(0)
+        # truth = torch.zeros(truth.size(0), len(bp_go_to_index)).scatter_(1, truth, 1.) 
+        # # print(f"There are {torch.sum(truth)} positives in this protein")
+        # if torch.sum(truth) >= 100:
+        #     protein_over_50 +=1
+    protein_over_50 = protein_over_50 / 31997
+    print(f" {protein_over_50:.2f} portion of proteins have over 10% positives")
 
 if __name__ == "__main__":
     args = parser_args()
@@ -214,4 +262,3 @@ if __name__ == "__main__":
 
 
 
-#

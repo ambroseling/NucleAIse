@@ -5,4 +5,5 @@
 /preprocessing/data
 /preprocessing/data/sp_per_file
 /checkpoints
+requirements.txt
 feature_matrx.pt
