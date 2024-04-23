@@ -41,6 +41,10 @@ from goatools.associations import get_tcntobj
 
 PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7
 
+
+#Note for people cloning the repo, there are some places you will need to change paths in order to access
+# the correct files (data,IA,configs etc). For places that need modification, it will be marked with MODIFT->
+
 class Pipeline():
     def __init__(self,model,args):
         super(Pipeline,self).__init__()
@@ -95,19 +99,40 @@ class Pipeline():
         self.ontology = args.ontology
         self.node_limit = args.node_limit
         self.args = args
+        # MODIFY ->
+        #This should be a path to a directory called 'checkpoints' inside your repo directory
+        self.checkpoints_path = "/home/tiny_ling/projects/nucleaise/checkpoints"
+        # MODIFY ->
+        #This should be a path to a config file (this is used for defining all the labels we choose), currently we are only training on BP ontology
+        #the path to the config on the cluster is /home/aling/config/bp_go.pt
+        self.config_path = "/home/tiny_ling/projects/nucleaise/pipeline/config"
+        # MODIFY ->
+        # this should be a path to the IA weights text file (retrieved from kaggle)
+        self.ia_path = '/home/tiny_ling/projects/nucleaise/IA/IA.txt'
+        # MODIFY ->
+        # this should be a path to the IA weights text file (retrieved from kaggle)
+        #the path to the config on the cluster is /home/aling/sp_per_file
+        self.data_dir = "/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/sp_per_file"
 
+        
     def load_checkpoint(self):
         latest_step = 0
-        for file in os.listdir("/home/tiny_ling/projects/nucleaise/checkpoints"):
-            #basename returns the final component of the path
-            step = int(file.split('.')[0].split('-')[1])
-            if step > latest_step:
-                latest_step = step
-        self.latest_step = latest_step
-        checkpoint = torch.load(f"/home/tiny_ling/projects/nucleaise/checkpoints/checkpoint-{latest_step}.pt")
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
+        checkpoints_path = self.checkpoints_path
+        if len(os.list_dir(checkpoints_path)) > 0:
+            for file in os.listdir(checkpoints_path):
+                #basename returns the final component of the path
+                step = int(file.split('.')[0].split('-')[1])
+                if step > latest_step:
+                    latest_step = step
+            self.latest_step = latest_step
+            # MODIFY ->
+            #same as above
+            checkpoint = torch.load(os.path.join(checkpoints_path,f"checkpoint-{latest_step}.pt"))
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        else:
+            return
 
     def count_parameters(self,model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -121,7 +146,8 @@ class Pipeline():
                 self.taxo_to_index = json.loads(json_file)
 
     def load_goa(self):
-        goa = torch.load(f'/home/tiny_ling/projects/nucleaise/pipeline/config/{self.ontology}_go.pt')
+
+        goa = torch.load(os.path.join(self.config_path,'{self.ontology}_go.pt'))
         self.go_set = goa['go_set']
         self.go_edge_index = goa[f'{self.ontology}_edge_index']
         self.go_to_index = goa[f'{self.ontology}_go_to_index']
@@ -133,7 +159,9 @@ class Pipeline():
 
     def load_goa_weighting(self):
         weighting = {}
-        with open('/home/tiny_ling/projects/nucleaise/IA/IA.txt') as file:
+        # MODIFY ->
+        # This should be a path to IA weights text file
+        with open(self.ia_path) as file:
             tsv_file = csv.reader(file, delimiter="\t")
             # printing data line by line
             for line in tsv_file:
@@ -154,14 +182,13 @@ class Pipeline():
             from preprocessing.data_factory_updated import ProteinDataset
             def custom_collate(batch):
                 return Batch.from_data_list(batch)
-            train_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,"/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/sp_per_file",self.godag,self.gosubdag,args)
-            val_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,"/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/sp_per_file",self.godag,self.gosubdag,args)
+            # MODIFY ->
+            #The path for datasets is the path to the data file
+            # the path to this on the cluster should be /home/aling/sp_per_file
+            train_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,self.data_dir,self.godag,self.gosubdag,args)
+            val_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,self.data_dir,self.godag,self.gosubdag,args)
             self.training_dataset = DataLoader(train_protein_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0,collate_fn = custom_collate)
-            # for batch in self.training_dataset:
-            #     print('yahooo')
-            #     print(batch)
-            #     break
-            # self.validation_dataset = DataLoader(self.train, batch_size=self.batch_size, shuffle=True, num_workers=0,collate_fn=self.custom_collate)
+            
         print("###############DATA LOADING SUCCESS###############")
         print("\n")
 
@@ -277,7 +304,7 @@ class Pipeline():
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'loss': loss,
-            }, f'/home/tiny_ling/projects/nucleaise/checkpoints/checkpoint-{step}.pt')
+            }, os.path.join(self.checkpoints_path,f"checkpoint-{step}.pt"))
         return
     def plot_training_curve(self):
         n = len(self.training_loss) # number of epochs
