@@ -120,7 +120,7 @@ class Pipeline():
         latest_step = 0
 
         checkpoints_path = self.checkpoints_path
-        if len(os.list_dir(checkpoints_path)) > 0:
+        if len(os.listdir(checkpoints_path)) > 0:
             for file in os.listdir(checkpoints_path):
                 #basename returns the final component of the path
                 step = int(file.split('.')[0].split('-')[1])
@@ -146,7 +146,7 @@ class Pipeline():
 
     def load_goa(self):
 
-        goa = torch.load(os.path.join(self.config_path,'{self.ontology}_go.pt'))
+        goa = torch.load(os.path.join(self.config_path,f'{self.ontology}_go.pt'))
         self.go_set = goa['go_set']
         self.go_edge_index = goa[f'{self.ontology}_edge_index']
         self.go_to_index = goa[f'{self.ontology}_go_to_index']
