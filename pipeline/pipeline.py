@@ -101,19 +101,20 @@ class Pipeline():
         self.args = args
         # MODIFY ->
         #This should be a path to a directory called 'checkpoints' inside your repo directory
-        self.checkpoints_path = "/home/tiny_ling/projects/nucleaise/checkpoints"
+        self.checkpoints_path = "/home/aling/NucleAIse/checkpoints"
         # MODIFY ->
         #This should be a path to a config file (this is used for defining all the labels we choose), currently we are only training on BP ontology
         #the path to the config on the cluster is /home/aling/config/bp_go.pt
-        self.config_path = "/home/tiny_ling/projects/nucleaise/pipeline/config"
+        self.config_path = "/home/aling/config"
         # MODIFY ->
         # this should be a path to the IA weights text file (retrieved from kaggle)
-        self.ia_path = '/home/tiny_ling/projects/nucleaise/IA/IA.txt'
+        self.ia_path = '/home/aling/nucleaise/IA/IA.txt'
         # MODIFY ->
         # this should be a path to the IA weights text file (retrieved from kaggle)
         #the path to the config on the cluster is /home/aling/sp_per_file
-        self.data_dir = "/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/sp_per_file"
-
+        self.data_dir = "/home/aling/sp_per_file"
+        self.t5_dir = "/home/aling/prot_t5_xl_half_uniref50-enc"
+        self.esm_dir = "/home/aling/esm2_t33_650M_UR50D"
         
     def load_checkpoint(self):
         latest_step = 0
@@ -126,8 +127,6 @@ class Pipeline():
                 if step > latest_step:
                     latest_step = step
             self.latest_step = latest_step
-            # MODIFY ->
-            #same as above
             checkpoint = torch.load(os.path.join(checkpoints_path,f"checkpoint-{latest_step}.pt"))
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -185,8 +184,8 @@ class Pipeline():
             # MODIFY ->
             #The path for datasets is the path to the data file
             # the path to this on the cluster should be /home/aling/sp_per_file
-            train_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,self.data_dir,self.godag,self.gosubdag,args)
-            val_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,self.data_dir,self.godag,self.gosubdag,args)
+            train_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,self.data_dir,self.godag,self.gosubdag,self.t5_dir,self.esm_dir,args)
+            val_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,self.data_dir,self.godag,self.gosubdag,self.t5_dir,self.esm_dir,args)
             self.training_dataset = DataLoader(train_protein_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0,collate_fn = custom_collate)
             
         print("###############DATA LOADING SUCCESS###############")

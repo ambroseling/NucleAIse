@@ -43,7 +43,7 @@ from transformers import AutoTokenizer, EsmModel
 
 
 class ProteinDataset(Dataset):
-    def __init__ (self,contacts,embedding,go_to_index,go_set,dir,godag,gosubdag,args):
+    def __init__ (self,contacts,embedding,go_to_index,go_set,dir,godag,gosubdag,t5_path,esm_path,args):
         super().__init__()
         self.embedding = embedding
         self.contacts = contacts
@@ -55,6 +55,8 @@ class ProteinDataset(Dataset):
         self.args = args
         self.godag = godag
         self.gosubdag = gosubdag
+        self.t5_path = t5_path
+        self.esm_path = esm_path
         self.load_llm()
         # self.load_tax()
 
@@ -63,10 +65,10 @@ class ProteinDataset(Dataset):
 
     def load_llm(self):
 
-        self.tokenizer = T5Tokenizer.from_pretrained('/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/prot_t5_xl_half_uniref50-enc', do_lower_case=False)
-        self.t5_model = T5EncoderModel.from_pretrained("/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/prot_t5_xl_half_uniref50-enc")
-        self.esm_tokenizer = AutoTokenizer.from_pretrained("/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/esm2_t33_650M_UR50D")
-        self.esm_model = EsmModel.from_pretrained("/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/esm2_t33_650M_UR50D")
+        self.tokenizer = T5Tokenizer.from_pretrained(self.t5_path, do_lower_case=False)
+        self.t5_model = T5EncoderModel.from_pretrained(self.t5_path)
+        self.esm_tokenizer = AutoTokenizer.from_pretrained(self.esm_path)
+        self.esm_model = EsmModel.from_pretrained(self.esm_path)
 
     
     def get_edge_index_and_features(self,adj_m):

@@ -3,7 +3,7 @@ import torch
 from tqdm import tqdm
 if __name__ == "__main__":
     node_limit =  678
-    protein_data_dir = "/mnt/c/Users/Ambrose/Desktop/stuff/nucleaise/sp_per_file"
+    protein_data_dir = "/home/aling/sp_per_file"
     for file in tqdm(os.listdir(protein_data_dir)):
         protein_file = torch.load(os.path.join(protein_data_dir,file))
         sequences = protein_file['sequence']
