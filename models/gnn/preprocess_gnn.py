@@ -1,6 +1,6 @@
 import torch
 from torch_geometric.loader import DataLoader
-from torch_geometric.data import InMemoryDataset, Data
+from torch_geometric.data import InMemoryDataset, Data, Database
 from torch_geometric.utils import to_edge_index
 from transformers import BertModel, BertTokenizer
 from Bio.PDB import *
@@ -12,13 +12,26 @@ import shutil
 import dotenv
 import requests
 import re
+import gc
 from tqdm import tqdm
+import tracemalloc
 dotenv.load_dotenv()
 
+class Database(Database):
+    def insert(self,index,value):
+        pass
+    def get(self):
+        pass
+
+
+
+
+
 class GNNDataset(InMemoryDataset):
-    def __init__(self, root, goa_percentage=1, train=True, transform=None, pre_transform=None, pre_filter=None, limit=None):
+    def __init__(self, root, batch_size, goa_percentage=1, train=True, transform=None, pre_transform=None, pre_filter=None, limit=None,database=None):
         self.limit = limit
         self.train = train
+        self.batch_size = batch_size
         self.goa_percentage = goa_percentage
         self.goa_list = []
         with open(os.environ['residue_name_mapping_file'], "r") as f:
@@ -28,8 +41,66 @@ class GNNDataset(InMemoryDataset):
         self.bert_tokenizer = BertTokenizer.from_pretrained(os.environ.get('bert_model_name'))
         self.bert_model = BertModel.from_pretrained(os.environ.get('bert_model_name')).to(self.device)
         super().__init__(root, transform, pre_transform, pre_filter)
-        print(self.processed_paths[0])
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        print("Loading Dataset Tensors...")
+        self.len = 10000
+        if os.path.exists(self.processed_paths[0]):
+
+            data_obj = []
+            # slices_list = []
+            # file_list = os.listdir(self.processed_dir)
+            # file_list.sort()
+            # for file in file_list:
+            #     if file[0:13] == 'dataset_batch':
+            #         print("Looking at " + file)
+            #         data, slices = torch.load(os.path.join(self.processed_dir, file))
+            #         print(data['edge_index'])
+            #         print(data['edge_index'].shape)
+            #         print(slices['edge_index'])
+            #         self.len += slices['x'].shape[0]-1
+
+            # print(self.len)
+            #         data_obj.append(data)
+            #         slices_list.append(slices)
+            # self.data, self.slices = self.collate(data_obj)
+            # # Generating New Slices
+            # assert self.slices['x'].shape[0] == self.slices['edge_index'].shape[0] == self.slices['edge_attr'].shape[0] == self.slices['y'].shape[0]
+            # shape = self.slices['x'].shape[0]
+            # new_x_slices = slices_list[0]['x']
+            # new_edge_index_slices = slices_list[0]['edge_index']
+            # new_edge_attr_slices = slices_list[0]['edge_attr']
+            # new_y_slices = slices_list[0]['y']
+            # for i in range(1, shape-1):
+            #     # Updating ith x slices
+            #     updated_x_slices = self.update_slices(slices_list[i]['x'], self.slices['x'][i])
+            #     new_x_slices = torch.cat((new_x_slices, updated_x_slices))
+
+            #     # Updating ith edge_index slices
+            #     updated_edge_index_slices = self.update_slices(slices_list[i]['edge_index'], self.slices['edge_index'][i])
+            #     new_edge_index_slices = torch.cat((new_edge_index_slices, updated_edge_index_slices))
+
+            #     # Update ith edge_attr slices
+            #     updated_edge_attr_slices = self.update_slices(slices_list[i]['edge_attr'], self.slices['edge_attr'][i])
+            #     new_edge_attr_slices = torch.cat((new_edge_attr_slices, updated_edge_attr_slices))
+
+            #     # Update ith y slices
+            #     updated_y_slices = self.update_slices(slices_list[i]['y'], self.slices['y'][i])
+            #     new_y_slices = torch.cat((new_y_slices, updated_y_slices))
+                
+            # self.slices['x'] = new_x_slices
+            # self.slices['edge_index'] = new_edge_index_slices
+            # self.slices['edge_attr'] = new_edge_attr_slices
+            # self.slices['y'] = new_y_slices
+            # print(self.data)
+            # print(self.slices)
+        else:
+            self.data = None
+            self.slices = None
+
+    def update_slices(self, slices, offset):
+        for j in range(slices.shape[0]):
+            slices[j] += offset
+        slices = slices[1:]
+        return slices
 
     @property
     def raw_file_names(self):
@@ -37,7 +108,7 @@ class GNNDataset(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return [os.environ.get("dataset_file")]
+        return [os.environ.get("dataset_complete")]
 
     def download(self):
         # If all files in raw_file_names are not present in self.raw_dir, get them
@@ -86,24 +157,26 @@ class GNNDataset(InMemoryDataset):
             if goa_freq[goa] >= 3:
                 self.goa_list.append(goa)
         self.goa_list.sort()
-        print(self.goa_list)
         goa_map = {}
         for i, goa in enumerate(self.goa_list):
             if i > self.goa_percentage*len(self.goa_list):
                 break
             goa_map[goa] = i
-        print(goa_map)
 
         # Forming Data Loop
         parser = PDBParser()
         dataset = []
+        # full_dataset = []
         missing_pdbs = []
         alphafold_sequence_mismatches = []
         alphafold_url_template = os.environ.get('alphafold_url_template')
         count = 0
-        for protein in tqdm(csv_dict):
+        batch_num = 174
+        print("Starting Batch " + str(batch_num))
+        for k, protein in enumerate(csv_dict[17804:]):
             if self.limit is not None and count > self.limit:
                 break
+            print("Protein " + str(k+1+17804))
             accession_id = protein["ID"]
             goa = protein["goa"].strip('][').split(', ')
             output_labels = []
@@ -145,71 +218,210 @@ class GNNDataset(InMemoryDataset):
                         
                 CLS, node_features = self.get_bert_embedding(sequence)
                 edge_index, edge_attr = to_edge_index(torch.tensor(contact_map).to_sparse())
-                data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr, y=output_labels)
+                y = torch.tensor(output_labels)
+                data = Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr, y=y)
                 data.validate(raise_on_error=True)
                 dataset.append(data)
+                # full_dataset.append(data)
+
+                if len(dataset) == self.batch_size:
+                    print(dataset)
+                    path = os.path.join(self.processed_dir, os.environ.get("dataset_file_format").format(i=batch_num))
+                    torch.save(self.collate(dataset), path)
+                    print("Batch " + str(batch_num) + " Completed")
+                    batch_num += 1       
+                    if self.limit is not None and (k+1) < self.limit:
+                        print("\nStarting Batch " + str(batch_num))  
+                    dataset.clear()        
+
             else:
+                print(" - Missing in AlphaFold")
                 missing_pdbs.append(accession_id)
             
             count += 1
-
-        torch.save(self.collate(dataset), self.processed_paths[0])
         
-        with open(os.path.join(self.processed_dir, "missing_pdbs.txt"), "w") as missing_pdb_file:
+        if len(dataset) > 0:
+            print(dataset)
+            path = os.path.join(self.processed_dir, os.environ.get("dataset_file_format").format(i=batch_num))
+            torch.save(self.collate(dataset), path)
+            print("Batch " + str(batch_num) + " Completed")
+
+        with open(os.path.join(self.processed_dir, "missing_pdbs.txt"), "a") as missing_pdb_file:
             for pdb in missing_pdbs:
                 missing_pdb_file.write(pdb + "\n")
         
-        with open(os.path.join(self.processed_dir, "alphafold_sequence_mismatches.txt"), "w") as alphafold_mismatch_file:
+        with open(os.path.join(self.processed_dir, "alphafold_sequence_mismatches.txt"), "a") as alphafold_mismatch_file:
             for accessed_id in alphafold_sequence_mismatches:
                 alphafold_mismatch_file.write(accession_id + "\n")
 
-def load_gnn_data():
-    dataset = GNNDataset(os.getcwd() + "/models/gnn", goa_percentage=0.8)
-    dataset.print_summary()
-    train_partition = int(len(dataset)*0.6)
-    val_partition = int(len(dataset)*0.8)
-    train_valid = False
-    val_valid = False
-    test_valid = False
-    while not train_valid or not val_valid or not test_valid:
-        dataset.shuffle()
-        train_set = dataset[0:train_partition]
-        val_set = dataset[train_partition:val_partition]
-        test_set = dataset[val_partition:]
+        with open(os.path.join(self.processed_dir, os.environ.get("dataset_complete")), "w") as completed_flag:
+            completed_flag.write("Completed Processing!")
 
-        goa_list = dataset.goa_list
-        for data in train_set:
-            for goa in data.y:
-                if goa in goa_list:
-                    goa_list.remove(goa)
-        train_valid = len(goa_list) == 0
-        if not train_valid:
-            continue
+        # torch.save(full_dataset, os.path.join(self.processed_dir, "full_dataset.pt"))
 
-        goa_list = dataset.goa_list
-        for data in val_set:
-            for goa in data.y:
-                if goa in goa_list:
-                    goa_list.remove(goa)
-        val_valid = len(goa_list) == 0
-        if not val_valid:
-            continue
+    def __getitem__(self, index):
+        print("Getting Index " + str(index)) 
+        dataset_batch_pt_size = int(os.environ.get('dataset_batch_pt_size'))
+        file_index = int(index/dataset_batch_pt_size) + 1
+        # print("File Index: " + str(file_index))
+        offset = index%(dataset_batch_pt_size)
+        # print("Offset: " + str(offset))
+        file = 'dataset_batch_' + str(file_index) + '.pt'
+        # print("File Name: " + str(file))
+        data, slices = torch.load(os.path.join(self.processed_dir, file))
+        data['x'] = data['x'][slices['x'][offset]:slices['x'][offset+1]]
+        data['edge_index'] = data['edge_index'][:, slices['edge_index'][offset]:slices['edge_index'][offset+1]]
+        data['edge_attr'] = data['edge_attr'][slices['edge_attr'][offset]:slices['edge_attr'][offset+1]]
+        data['y'] = data['y'][slices['y'][offset]:slices['y'][offset+1]]
 
-        goa_list = dataset.goa_list
-        for data in test_set:
-            for goa in data.y:
-                if goa in goa_list:
-                    goa_list.remove(goa)
-        test_valid = len(goa_list) == 0
+        return data
 
-    train_set.print_summary()
-    test_set.print_summary()
-    train_loader = DataLoader(dataset=train_set, batch_size=64, shuffle=True)
-    val_loader = DataLoader(dataset=val_set, batch_size=64, shuffle=True)
-    test_loader = DataLoader(dataset=test_set, batch_size=64, shuffle=True)
-    return train_loader,val_loader,test_loader
+    def __len__(self):
+        return self.len
 
+
+
+class CompleteGNNDataset(InMemoryDataset):
+    def __init__(self, root, type, transform=None, pre_transform=None, pre_filter=None,):
+        super().__init__(root, transform, pre_transform, pre_filter)
+        self.filename = '../models/gnn/dataset_batches/{type}_batch_{i}.json'
+
+        # Get IDs
+        self.ids = []
+        with open('nucleaise/{type}_set_ids.txt'.format(type=type), "r") as file:
+            for line in file.readlines():
+                batch_num, offset = line.strip('()\n').split(",")
+                self.ids.append((int(batch_num), int(offset)))
+
+        # Helper Variables
+        with open("nucleaise/go_set_mapping.json", "r") as file:
+            self.go_set_map = json.load(file)
+
+    def __getitem__(self, index):
+        batch_num, offset = self.ids[index]
+        # print("Batch num: ",batch_num)
+        data, slices = torch.load('nucleaise/models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=batch_num))
+        # print(type(data))
+        go_encoding = [0] * 2048
+        for go_tensor in data['y'][slices['y'][offset]:slices['y'][offset+1]]:
+            go = "GO:" + str(go_tensor.item()).zfill(7)
+            if go in self.go_set_map:
+                go_encoding[self.go_set_map[go]] = 1        
+
+        data['x'] = data['x'][slices['x'][offset]:slices['x'][offset+1]]
+        data['edge_index'] = data['edge_index'][:, slices['edge_index'][offset]:slices['edge_index'][offset+1]]
+        data['edge_attr'] = data['edge_attr'][slices['edge_attr'][offset]:slices['edge_attr'][offset+1]]
+        data['y'] = torch.tensor(go_encoding)
+        # print(data)
+        return data
+
+    def __len__(self):
+        return len(self.ids)
+
+
+    # TODO: Move batch_sorting.py and batch_reforming.py logic to here
+    @property
+    def raw_file_names(self):
+        return []
+    @property
+    def processed_file_names(self):
+        return []
+    def download(self):
+        pass
+    def process(self):
+        pass
+
+
+def create_loader(type, batch_size):
+    dataset = CompleteGNNDataset(
+        os.getcwd() + "/models/gnn",
+        type=type
+    )
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+def load_completed_gnn_datasets(batch_size):
+    train_loader = create_loader('train', batch_size=batch_size)
+    test_loader = create_loader('test', batch_size=batch_size)
+    val_loader = create_loader('val', batch_size=batch_size)
+    return train_loader, test_loader, val_loader
+
+    
+def load_gnn_data(batch_size, goa_percentage=1, limit=None):
+    dataset = GNNDataset(
+        os.getcwd() + "/models/gnn", 
+        batch_size=batch_size, 
+        goa_percentage=goa_percentage, 
+        limit=limit
+    )
+
+    loader = DataLoader(dataset, batch_size=8, shuffle=False)
+    for batch_idx, data in enumerate(loader):
+        print('batch: {}\tdata: {}'.format(batch_idx, data))
+
+    # train_set = []
+    # val_set = []
+    # test_set = []
+    # dataset_list = list(dataset)
+    # print("Creating Train, Val, and Test Sets")
+    # for goa in dataset.goa_list:
+    #     for protein in dataset_list:
+    #         if goa in set(protein.y):
+    #             train_set.append(protein)
+    #             dataset_list.remove(protein)
+    #             break
+
+    #     for protein in dataset_list:
+    #         if goa in set(protein.y):
+    #             val_set.append(protein)
+    #             dataset_list.remove(protein)
+    #             break
+
+    #     for protein in dataset_list:
+    #         if goa in set(protein.y):
+    #             val_set.append(protein)
+    #             dataset_list.remove(protein)
+    #             break
+        
+    # train_partition = int(len(dataset_list)*0.6)
+    # val_partition = int(len(dataset_list)*0.8)
+
+    # train_set += dataset_list[0:train_partition]
+    # val_set += dataset_list[train_partition: val_partition]
+    # test_set += dataset_list[val_partition:]
+
+    # print("Creating DataLoaders")
+    # train_loader = DataLoader(dataset=train_set, batch_size=8, shuffle=True)
+    # val_loader = DataLoader(dataset=val_set, batch_size=8, shuffle=True)
+    # test_loader = DataLoader(dataset=test_set, batch_size=8, shuffle=True)
+    # return train_loader,val_loader,test_loader
 
 if __name__ == '__main__':
-    train_loader, val_loader, test_loader = load_gnn_data()
+    data, slices = torch.load('/Users/ambroseling/Desktop/NucleAIse/nucleaise/models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=134))
+    print((data))
+    # batch_size = 100
+    # train_loader, val_loader, test_loader = load_gnn_data(batch_size=batch_size)
+    # reconstructed_dataset = []
+    # for batch in train_loader:
+    #     reconstructed_dataset += batch.to_data_list()
+    
+    # for batch in val_loader:
+    #     reconstructed_dataset += batch.to_data_list()
 
+    # for batch in test_loader:
+    #     reconstructed_dataset += batch.to_data_list()
+
+    # print(reconstructed_dataset)
+    # print(len(reconstructed_dataset))
+
+    # original_dataset = torch.load("models/gnn/processed/full_dataset.pt")
+
+    # count = 0
+    # for obj1 in original_dataset:
+    #     # Compare Node Features
+    #     for obj2 in reconstructed_dataset:
+    #         if torch.equal(obj1.x, obj2.x) and torch.equal(obj1.edge_index, obj2.edge_index) and torch.equal(obj1.edge_attr, obj2.edge_attr) and torch.equal(obj1.y, obj2.y):
+    #             count += 1
+    #             break
+
+    # assert count == len(original_dataset)
+    # print("DONE!")

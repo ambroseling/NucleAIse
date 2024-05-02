@@ -2,40 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-torch.manual_seed(100)
-N = 5 #number of nodes
-F = 2  #number of input node features
-F_prime = 3 #number of output node features
-# F_fprime = 5 # number of output node features
-# F_eprime =12 # number of output edge features
-H = torch.rand(N,F)
-print('Input features: ', H)
-E = 20 # number of edges
-M = 12 # number of edge features
-
-#Code to do sanity check:
-# A = torch.rand(1,3)
-# M = torch.rand(3,3)
-# M0 = M[0]
-# M1 = M[1]
-# M2 = M[2]
-# N = torch.rand(3,5)
-# print(torch.matmul(A,torch.matmul(M,N)))
-# print(A[0][0]*torch.matmul(M0,N)+A[0][1]*torch.matmul(M1,N)+A[0][2]*torch.matmul(M2,N))
-
-
-
-#Architecture based on Graph Attention Networks Layer implementation
-
-A = [
-    [0,1,0,0,0],
-    [1,0,1,0,0],
-    [0,1,0,1,1],
-    [0,0,1,0,0],
-    [0,0,1,0,0]
-]
-
-H = torch.rand(N,F)
+#Our sample implementation of Graph Attention Networks 
 
 class GAN(nn.Module):
     def __init__(self,N,in_channels,out_channels,num_heads):

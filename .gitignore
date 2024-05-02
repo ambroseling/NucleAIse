@@ -1,3 +1,9 @@
 /models/gnn/raw
 /models/gnn/processed
+/models/gnn/processed.zip
+/preprocessing/uniref50.sql
+/preprocessing/data
+/preprocessing/data/sp_per_file
+/checkpoints
+requirements.txt
 feature_matrx.pt

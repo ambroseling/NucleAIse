@@ -3,9 +3,8 @@ import numpy as np
 import torch.nn as nn
 import networkx as nx
 
+#Our sample implementation of Graph Convolutional Networks 
 
-def normalize_features(X):
-    return 
 
 class GCN(nn.Module):
     def __init__(self,in_channels,out_channels):
@@ -32,17 +31,3 @@ class GCN_layer(nn.Module):
                 X = layer(X,A)
             return self.softmax(X)
         #Outputs N x F
-
-A = [
-    [0,1,0,0,0],
-    [1,0,1,0,0],
-    [0,1,0,1,1],
-    [0,0,1,0,0],
-    [0,0,1,0,0]
-]
-A = np.where(np.array(A)>0)
-print(A)
-# X = torch.rand(5,2)
-# layer = GCN_layer()
-# output = layer(X,A,True)
-# print('Done')
