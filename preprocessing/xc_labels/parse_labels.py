@@ -10,7 +10,7 @@ class GO_Term:
 # Parse the .obo file
 go_terms = {}
 current_term = None
-with open("gene_ontology.obo", "r") as file:
+with open("NucleAIse\preprocessing\data\go-basic.obo", "r") as file:
     for line in file:
         line = line.strip()
         if line.startswith("[Term]"):
