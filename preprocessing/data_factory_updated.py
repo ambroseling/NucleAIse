@@ -7,40 +7,26 @@ from typing import NamedTuple, List, Optional, AsyncIterator, Iterator, Union
 from transformers import BertModel, BertTokenizer
 from transformers import T5Tokenizer, T5Model,T5EncoderModel
 from enum import Enum
-import asyncpg
-from asyncpg.pool import Pool
-from asyncio import AbstractEventLoop
-import asyncio
 import time
-# from utils import wrap_async_iter
 import numpy as np
 from torch.utils.data import DataLoader
 from datetime import datetime
-import threading
-import asyncio
-import queue
 import esm
 import torch
-import requests
 import pandas as pd
 from goatools.gosubdag.gosubdag import GoSubDag
 
 from Bio.PDB import *
-import concurrent.futures
 import scipy
 from scipy import sparse
 import re
 from goatools.base import get_godag
-import sqlite3
-from transformers import BertModel, BertTokenizer
-from transformers import T5Tokenizer, T5Model,T5EncoderModel
 import json
 import ast 
 import os
 from torch.utils.data import Dataset,DataLoader,Subset
 import ast
 from transformers import AutoTokenizer, EsmModel
-
 
 class ProteinDataset(Dataset):
     def __init__ (self,contacts,embedding,go_to_index,go_set,dir,godag,gosubdag,t5_path,esm_path,args):

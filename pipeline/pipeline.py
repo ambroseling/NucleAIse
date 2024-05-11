@@ -1,7 +1,7 @@
 import sys
 import os
 from pathlib import Path
-sys.path.append('/home/tiny_ling/projects/nucleaise/')
+sys.path.append('/home/aling/NucleAIse/')
 sys.path.insert(0, str(Path(__file__).parent))
 import sqlite3
 import torch
@@ -12,12 +12,10 @@ import argparse
 import csv
 import json
 import time
-import asyncio
 import threading
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.pyplot as plt
-import asyncpg
 from torch.profiler import profile, record_function, ProfilerActivity
 import threading
 from models.deepgnn import Model
@@ -108,7 +106,7 @@ class Pipeline():
         self.config_path = "/home/aling/config"
         # MODIFY ->
         # this should be a path to the IA weights text file (retrieved from kaggle)
-        self.ia_path = '/home/aling/nucleaise/IA/IA.txt'
+        self.ia_path = '/home/aling/NucleAIse/IA/IA.txt'
         # MODIFY ->
         # this should be a path to the IA weights text file (retrieved from kaggle)
         #the path to the config on the cluster is /home/aling/sp_per_file
@@ -117,7 +115,7 @@ class Pipeline():
         self.esm_dir = "/home/aling/esm2_t33_650M_UR50D"
         
     def load_checkpoint(self):
-        latest_step = 0
+        self.latest_step = 0
 
         checkpoints_path = self.checkpoints_path
         if len(os.listdir(checkpoints_path)) > 0:
@@ -125,8 +123,7 @@ class Pipeline():
                 #basename returns the final component of the path
                 step = int(file.split('.')[0].split('-')[1])
                 if step > latest_step:
-                    latest_step = step
-            self.latest_step = latest_step
+                    self.latest_step = step
             checkpoint = torch.load(os.path.join(checkpoints_path,f"checkpoint-{latest_step}.pt"))
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -152,7 +149,7 @@ class Pipeline():
         self.go_to_index = goa[f'{self.ontology}_go_to_index']
         self.index_to_go = goa[f'{self.ontology}_index_to_go']
         self.associations = goa['valid_associations']
-        self.godag = get_godag("go-basic.obo")
+        self.godag = get_godag("/home/aling/NucleAIse/go-basic.obo")
         self.gosubdag = GoSubDag(self.go_set,self.godag)
         self.load_goa_weighting()
 

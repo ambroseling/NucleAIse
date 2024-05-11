@@ -7,7 +7,6 @@ from torch_geometric.nn import aggr
 from torch_geometric.data import Data,Batch
 import torch.nn.functional as F
 import torch.nn as nn
-from egnn_pytorch import EGNN
 import math
 import gc 
 
