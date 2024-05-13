@@ -26,6 +26,9 @@ from preprocessing.data_factory_updated import ProteinDataset
 from torch_geometric.data import Data,Batch
 import torch_geometric
 import torch.nn as nn
+from torch.nn.parallel import DistributedDataParallel
+import torch.multiprocessing as mp
+import torch.distributed as dist
 import math
 import esm
 from transformers import BertModel, BertTokenizer
@@ -77,6 +80,9 @@ class Pipeline():
         self.best_epoch = 0
         self.best_path = ""
 
+        # distributed training metric
+        self.world_size = 4
+
         #other metrics 
         self.training_time = 0.0
         self.avg_inference_time = 0.0
@@ -110,12 +116,14 @@ class Pipeline():
         # MODIFY ->
         # this should be a path to the IA weights text file (retrieved from kaggle)
         #the path to the config on the cluster is /home/aling/sp_per_file
-        self.data_dir = "/home/aling/sp_per_file"
+        self.train_data_dir = "/home/aling/sp_per_file"
+        self.val_data_dir = "/home/aling/set5_uniref50"
         self.t5_dir = "/home/aling/prot_t5_xl_half_uniref50-enc"
         self.esm_dir = "/home/aling/esm2_t33_650M_UR50D"
         
-    def load_checkpoint(self):
-        self.latest_step = 0
+
+    def load_checkpoint(model,optimizer):
+        latest_step = 0
 
         checkpoints_path = self.checkpoints_path
         if len(os.listdir(checkpoints_path)) > 0:
@@ -123,10 +131,10 @@ class Pipeline():
                 #basename returns the final component of the path
                 step = int(file.split('.')[0].split('-')[1])
                 if step > latest_step:
-                    self.latest_step = step
+                    latest_step = step
             checkpoint = torch.load(os.path.join(checkpoints_path,f"checkpoint-{latest_step}.pt"))
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         else:
             return
 
@@ -168,9 +176,10 @@ class Pipeline():
             self.pos_weight[self.go_to_index[term]] = weighting[term]
         
 
-    def load_data(self):
+    def load_data(self,others):
         self.load_taxonomy()
         self.load_goa()
+        
         taxo_to_index = self.taxo_to_index
         if self.args.use_local_postgresql:
             pass
@@ -181,77 +190,10 @@ class Pipeline():
             # MODIFY ->
             #The path for datasets is the path to the data file
             # the path to this on the cluster should be /home/aling/sp_per_file
-            train_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,self.data_dir,self.godag,self.gosubdag,self.t5_dir,self.esm_dir,args)
-            val_protein_dataset = ProteinDataset("alphafold","esm",self.go_to_index,self.go_set,self.data_dir,self.godag,self.gosubdag,self.t5_dir,self.esm_dir,args)
-            self.training_dataset = DataLoader(train_protein_dataset, batch_size=self.batch_size, shuffle=True, num_workers=0,collate_fn = custom_collate)
-            
+        others['pos_weight'] = self.pos_weight
+        others['go_edge_index'] = self.go_edge_index
         print("###############DATA LOADING SUCCESS###############")
         print("\n")
-
-    def train(self):
-        print("###############STARTING TRAINING###############")
-        self.model.train()
-        self.model.to(self.device)
-        train_start = time.time()
-        self.optimizer = torch.optim.Adam(self.model.parameters(),lr=self.learning_rate)
-
-        self.load_checkpoint()
-
-        for epoch in range(self.epoch):
-            epoch_start = time.time()
-            b = 0 if self.latest_step is None else self.latest_step
-            for batch in self.training_dataset:
-                print(batch)
-                batch.x = batch.x.type(torch.float32)
-                batch.y = batch.y.type(torch.float32)
-                batch.edge_attr = batch.edge_attr.type(torch.float32)
-                batch.edge_index = batch.edge_index.type(torch.long)
-                batch = batch.to(self.device)
-            
-                inf_start = time.time()
-                output = self.model(batch,self.go_edge_index)
-                y_target = output.y.unsqueeze(-1).view(self.batch_size,self.num_labels).cpu()
-                y_pred = output.x.reshape((self.batch_size,self.num_labels)).cpu()
-                inf_end = time.time()
-                print("Output from model: ")
-                torch.set_printoptions(threshold=10_000)
-                print (f"Forward pass time: {inf_end-inf_start}")
-                loss = self.loss_fn(y_pred,y_target)
-                loss.backward()
-
-                y_pred = 1 / (1 + torch.exp(-y_pred)) 
-                acc = self.get_acc(y_pred,y_target)
-                recall = self.get_recall(y_pred,y_target)
-                precision = self.get_precision(y_pred,y_target)
-                # fmax = self.get_fmax(output.x,y_target)
-                self.optimizer.step()
-                self.optimizer.zero_grad(set_to_none=True)
-                b+=1
-                self.training_loss.append(loss.item())
-                self.training_acc.append(acc)
-                print(f"Step {b} ======== Trainin Loss: {loss.item()}  Training Accuracy: {acc} Precision: {precision} Recall:{recall} ==========")
-
-                if b%100 == 0:
-                    self.save(epoch,self.model,self.avg_val_loss,b)
-                # print(f'Step {b} ===Epoch: {epoch} | Training Loss: {self.avg_train_loss:.3f} | Validation Loss: {self.avg_val_loss:.3f} | Training Acc: {self.avg_train_acc:.3f} | Validation Loss: {self.avg_val_acc:.3f} | Avg inference time: {self.avg_inference_time:.3f} | Time per epoch: {epoch_time:.3f}')
-                
-
-        train_end = time.time()
-        self.training_time = train_end-train_start
-        print("###############TRAINING COMPLETE###############")
-        print("Training metrics: ")
-        print("Final training loss: ",self.avg_train_loss)
-        print("Final validation loss: ",self.avg_val_loss)
-        print("Best validation loss: ",self.best_val_loss)
-        print("Final training acc: ",self.avg_train_acc)
-        print("Final validation acc: ",self.avg_val_acc)
-        print("Best validation acc: ",self.best_test_acc)
-        print("Best epoch: ",self.best_epoch)
-        print("Avg training inference time: ",self.avg_inference_time)
-        print("Total training time: ",self.training_time)
-        print(f"Model size: {self.find_model_size(self.model)} MB")
-        self.plot_training_curve()
-        return
 
     def find_model_size(self,model):
         model = self.model
@@ -265,43 +207,6 @@ class Pipeline():
         size_all_mb = (param_size + buffer_size) / 1024**2
         return size_all_mb
 
-    def get_acc(self,output,target):
-
-        output = torch.where(output > 0.5, 1.0, 0.0)
-        print("Proportion of +s predicted:",torch.sum(output == 1))
-        print("Proportion of -s predicted:",torch.sum(output == 0))
-        print("Proportion of +s actual:",torch.sum(target == 1))
-        print("Proportion of -s actual:",torch.sum(target == 0))
-
-        acc = torch.sum(output==target) / target.shape[0]
-        return acc
-    def get_precision(self,output,target):
-        #tp_fp means all the postives that were identified
-        output = torch.where(output > 0.5, 1.0, 0.0)
-        output = output.detach().cpu().numpy() 
-        target = target.detach().cpu().numpy() 
-
-        precision = precision_score(output,target,average="micro")
-        return precision
-    def get_recall(self,output,target):
-        #tp_fn means all the labels that 
-        output = torch.where(output > 0.5, 1.0, 0.0)   
-        output = output.detach().cpu().numpy() 
-        target = target.detach().cpu().numpy() 
-        recall = recall_score(output,target,average="micro")
-        return recall
-    # def get_fmax(self,output,target):
-    #     pass
-
-
-    def save(self,epoch,model,loss,step):
-        torch.save({
-            'epoch':epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'loss': loss,
-            }, os.path.join(self.checkpoints_path,f"checkpoint-{step}.pt"))
-        return
     def plot_training_curve(self):
         n = len(self.training_loss) # number of epochs
         fig = plt.figure()
@@ -319,6 +224,144 @@ class Pipeline():
         plt.ylabel("Accuracy")
         plt.legend(loc='best')
         plt.savefig(f"../training_curves/{self.model_name}_bs{self.batch_size}_lr{self.learning_rate}_acc.png")
+
+
+
+@torch.no_grad()
+def val(model,loader,world_size,rank,args,others):
+    model.eval()
+    for batch in loader:
+        batch.x = batch.x.type(torch.float32)
+        batch.y = batch.y.type(torch.float32)
+        batch.edge_attr = batch.edge_attr.type(torch.float32)
+        batch.edge_index = batch.edge_index.type(torch.long)
+    
+        inf_start = time.time()
+        output = model(batch,others['go_edge_index'])
+        y_target = output.y.unsqueeze(-1).view(args.batch_size,args.num_labels).cpu()
+        y_pred = output.x.reshape((args.batch_size,args.num_labels)).cpu()
+        inf_end = time.time()
+        y_pred = 1 / (1 + torch.exp(-y_pred)) 
+        acc += get_acc(y_pred,y_target)
+        recall += get_recall(y_pred,y_target)
+        precision += get_precision(y_pred,y_target)
+    acc /= len(loader)
+    recall /= len(recall)
+    precision /= len(precision)
+    return torch.tensor(acc,device=rank),torch.tensor(recall,device=rank),torch.tensor(precision,device=rank)
+    # BBL drizzy
+
+def train(rank,world_size,train_protein_dataset,val_protein_dataset,args,others):
+    '''
+    rank is the index of the process (Ali: which gpu this is running on) 
+    world size is the total number of processes (Ali: how many GPUs we have)
+
+    '''
+    print("###############STARTING TRAINING###############")
+
+    dist.init_process('nccl',rank=rank,world_size=world_size)    
+    from preprocessing.data_factory_updated import ProteinDataset
+    def custom_collate(batch):
+        return Batch.from_data_list(batch)
+        # MODIFY ->
+        #The path for datasets is the path to the data file
+        # the path to this on the cluster should be /home/aling/sp_per_file
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_protein_dataset,num_replicas=world_size,rank=rank)
+    
+    training_dataset = DataLoader(train_protein_dataset, batch_size= args.batch_size, shuffle=True, num_workers=0,sampler = train_sampler,collate_fn = custom_collate)
+
+
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight = others['pos_weight'])
+                
+    print("###############DATA LOADING SUCCESS###############")
+    print("\n")
+    model = Model(args)
+    model.train() 
+    optimizer = torch.optim.Adam(model.parameters(),lr=args.learning_rate)
+    load_checkpoint(model,optimizer)
+    model = DistributedDataParallel(model,device_ids=[rank])
+
+    for epoch in range(epoch):
+        epoch_start = time.time()
+        for b,batch in enumerate(training_dataset):
+            print(batch)
+            batch.x = batch.x.type(torch.float32)
+            batch.y = batch.y.type(torch.float32)
+            batch.edge_attr = batch.edge_attr.type(torch.float32)
+            batch.edge_index = batch.edge_index.type(torch.long)
+        
+            inf_start = time.time()
+            output = model(batch,others['go_edge_index'])
+            y_target = output.y.unsqueeze(-1).view(args.batch_size,args.num_labels).cpu()
+            y_pred = output.x.reshape((args.batch_size,args.num_labels)).cpu()
+            inf_end = time.time()
+            print("Output from model: ")
+            torch.set_printoptions(threshold=10_000)
+            print (f"Forward pass time: {inf_end-inf_start}")
+            loss = loss_fn(y_pred,y_target)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            
+            dist.barrier()
+            if rank ==0:
+                y_pred = 1 / (1 + torch.exp(-y_pred)) 
+                acc = get_acc(y_pred,y_target)
+                recall = get_recall(y_pred,y_target)
+                precision = get_precision(y_pred,y_target)
+                 # fmax = self.get_fmax(output.x,y_target)
+                
+                print(f"Step {b} ======== Trainin Loss: {loss.item()}  Training Accuracy: {acc} Precision: {precision} Recall:{recall} ==========")
+            if b%100 == 0:
+                val_acc,val_precision,val_recall = val(model,val_dataset,rank,world_size,args,others)
+                if world_size > 1:
+                    dist.all_reduce(val_acc,op=dist.ReduceOp.SUM)
+                    dist.all_reduce(val_precision,op=dist.ReduceOp.SUM)
+                    dist.all_reduce(val_recall,op=dist.ReduceOp.SUM)
+                    val_acc /= world_size
+                    val_precision /= world_size
+                    val_recall /= world_size
+                if rank ==0:
+                    print(f"Step {b} ======== Validation Acc: {val_acc} Validation Precision: {val_precision} Validation Recall: {val_recall}")
+                torch.save({
+                    'epoch':epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': loss,
+                    }, os.path.join(args.checkpoints_path,f"checkpoint-{step}.pt"))     
+            
+            dist.barrier()
+    dist.destroy_process_group() # signifies that training is over, terminates communication between GPUs 
+    return
+
+
+def get_acc(output,target):
+
+    output = torch.where(output > 0.5, 1.0, 0.0)
+    print("Proportion of +s predicted:",torch.sum(output == 1))
+    print("Proportion of -s predicted:",torch.sum(output == 0))
+    print("Proportion of +s actual:",torch.sum(target == 1))
+    print("Proportion of -s actual:",torch.sum(target == 0))
+
+    acc = torch.sum(output==target) / target.shape[0]
+    return acc
+def get_precision(output,target):
+    #tp_fp means all the postives that were identified
+    output = torch.where(output > 0.5, 1.0, 0.0)
+    output = output.detach().cpu().numpy() 
+    target = target.detach().cpu().numpy() 
+
+    precision = precision_score(output,target,average="micro")
+    return precision
+def get_recall(output,target):
+    #tp_fn means all the labels that 
+    output = torch.where(output > 0.5, 1.0, 0.0)   
+    output = output.detach().cpu().numpy() 
+    target = target.detach().cpu().numpy() 
+    recall = recall_score(output,target,average="micro")
+    return recall
+
+
 
 
 def parser_args():
@@ -359,10 +402,13 @@ def parser_args():
 if __name__ == "__main__":
     args = parser_args()
     model = Model(args)
-    print(model)
-    pipline = Pipeline(args=args,model=model)
-    pipline.load_data()
-    pipline.train()
+    others = {}
+    pipeline = Pipeline(args=args,model=model)
+    pipeline.load_data(others)
+    train_protein_dataset = ProteinDataset("alphafold","esm",pipeline.go_to_index,pipeline.go_set,pipeline.train_data_dir,pipeline.godag,pipeline.gosubdag,pipeline.t5_dir,pipeline.esm_dir,args)
+    val_protein_dataset = ProteinDataset("alphafold","esm",pipeline.go_to_index,pipeline.go_set,pipeline.val_data_dir,pipeline.godag,pipeline.gosubdag,pipeline.t5_dir,pipeline.esm_dir,args) 
+    world_size = torch.cuda.device_count()
+    mp.spawn(train,args=(world_size,train_protein_dataset,val_protein_dataset,args,others),nprocs=world_size,join=True)
 # if __name__ == "__main__":
 #     # for i in range(1,196):
 #     #     data,_ = torch.load('nucleaise/models/gnn/processed/dataset_batch_{batch_num}.pt'.format(batch_num=i))
