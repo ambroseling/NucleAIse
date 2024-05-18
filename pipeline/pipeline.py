@@ -1,8 +1,12 @@
 import sys
 import os
 from pathlib import Path
-sys.path.append('/home/aling/NucleAIse/')
-sys.path.insert(0, str(Path(__file__).parent))
+# sys.path.append('/home/aling/NucleAIse/')
+# sys.path.insert(0, str(Path(__file__).parent))
+# Determine the root directory of your project
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.append(str(root_dir))
+
 import sqlite3
 import torch
 import numpy as np 
@@ -39,9 +43,8 @@ from sklearn.metrics import recall_score
 from goatools.gosubdag.gosubdag import GoSubDag
 from goatools.base import get_godag
 from goatools.associations import get_tcntobj
-
+import dill as pickle # Import dill for serialization
 PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7
-
 
 #Note for people cloning the repo, there are some places you will need to change paths in order to access
 # the correct files (data,IA,configs etc). For places that need modification, it will be marked with MODIFT->
@@ -104,23 +107,32 @@ class Pipeline():
         self.node_limit = args.node_limit
         self.args = args
         # MODIFY ->
-        #This should be a path to a directory called 'checkpoints' inside your repo directory
-        self.checkpoints_path = "/home/aling/NucleAIse/checkpoints"
+        # This should be a path to a directory called 'checkpoints' inside your repo directory
+        # self.checkpoints_path = "/home/aling/NucleAIse/checkpoints"
         # MODIFY ->
-        #This should be a path to a config file (this is used for defining all the labels we choose), currently we are only training on BP ontology
-        #the path to the config on the cluster is /home/aling/config/bp_go.pt
-        self.config_path = "/home/aling/config"
+        # This should be a path to a config file (this is used for defining all the labels we choose), currently we are only training on BP ontology
+        # The path to the config on the cluster is /home/aling/config/bp_go.pt
+        # self.config_path = "/home/aling/config"
         # MODIFY ->
-        # this should be a path to the IA weights text file (retrieved from kaggle)
-        self.ia_path = '/home/aling/NucleAIse/IA/IA.txt'
+        # This should be a path to the IA weights text file (retrieved from kaggle)
+        # self.ia_path ='/home/aling/NucleAIse/IA/IA.txt'
         # MODIFY ->
-        # this should be a path to the IA weights text file (retrieved from kaggle)
-        #the path to the config on the cluster is /home/aling/sp_per_file
-        self.train_data_dir = "/home/aling/sp_per_file"
-        self.val_data_dir = "/home/aling/set5_uniref50"
-        self.t5_dir = "/home/aling/prot_t5_xl_half_uniref50-enc"
-        self.esm_dir = "/home/aling/esm2_t33_650M_UR50D"
-        
+        # This should be a path to the IA weights text file (retrieved from kaggle)
+        # The path to the config on the cluster is /home/aling/sp_per_file
+        # self.train_data_dir = "/home/aling/sp_per_file"
+        # self.val_data_dir = "/home/aling/set5_uniref50"
+        # self.t5_dir = "/home/aling/prot_t5_xl_half_uniref50-enc"
+        # self.esm_dir = "/home/aling/esm2_t33_650M_UR50D"
+        # Our root dir is this:
+
+        # Set paths dynamically
+        self.checkpoints_path = root_dir / "checkpoints"
+        self.config_path = root_dir.parent / "config"
+        self.ia_path = root_dir / "IA/IA.txt"
+        self.train_data_dir = root_dir.parent / "sp_per_file"
+        self.val_data_dir = root_dir.parent / "set5_uniref50"
+        self.t5_dir = root_dir.parent / "prot_t5_xl_half_uniref50-enc"
+        self.esm_dir = root_dir.parent / "esm2_t33_650M_UR50D"
 
     def load_checkpoint(model,optimizer):
         latest_step = 0
@@ -157,7 +169,7 @@ class Pipeline():
         self.go_to_index = goa[f'{self.ontology}_go_to_index']
         self.index_to_go = goa[f'{self.ontology}_index_to_go']
         self.associations = goa['valid_associations']
-        self.godag = get_godag("/home/aling/NucleAIse/go-basic.obo")
+        self.godag = get_godag(str(root_dir) + "/go-basic.obo")
         self.gosubdag = GoSubDag(self.go_set,self.godag)
         self.load_goa_weighting()
 
@@ -188,7 +200,7 @@ class Pipeline():
             def custom_collate(batch):
                 return Batch.from_data_list(batch)
             # MODIFY ->
-            #The path for datasets is the path to the data file
+            # The path for datasets is the path to the data file
             # the path to this on the cluster should be /home/aling/sp_per_file
         others['pos_weight'] = self.pos_weight
         others['go_edge_index'] = self.go_edge_index
@@ -264,8 +276,8 @@ def train(rank,world_size,train_protein_dataset,val_protein_dataset,args,others)
     def custom_collate(batch):
         return Batch.from_data_list(batch)
         # MODIFY ->
-        #The path for datasets is the path to the data file
-        # the path to this on the cluster should be /home/aling/sp_per_file
+        # The path for datasets is the path to the data file
+        # The path to this on the cluster should be /home/aling/sp_per_file
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_protein_dataset,num_replicas=world_size,rank=rank)
     
     training_dataset = DataLoader(train_protein_dataset, batch_size= args.batch_size, shuffle=True, num_workers=0,sampler = train_sampler,collate_fn = custom_collate)
@@ -398,8 +410,18 @@ def parser_args():
     args = parser.parse_args()
     return args
 
+# Ensure dill is used for serialization
+def dill_worker_init():
+    import multiprocessing.reduction
+    import multiprocessing.spawn
+    multiprocessing.reduction.dump = pickle.dump
+    multiprocessing.reduction.load = pickle.load
+    multiprocessing.spawn.set_executable(sys.executable)
 
 if __name__ == "__main__":
+    mp.set_start_method('spawn', force=True)  # Ensure 'spawn' is used
+    dill_worker_init()  # Use dill for serialization
+    
     args = parser_args()
     model = Model(args)
     others = {}
