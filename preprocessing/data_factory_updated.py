@@ -27,7 +27,9 @@ import os
 from torch.utils.data import Dataset,DataLoader,Subset
 import ast
 from transformers import AutoTokenizer, EsmModel
-
+import sys
+# Increase recursion limit || For the "exceeded recurssion limit error"
+sys.setrecursionlimit(3000)
 class ProteinDataset(Dataset):
     def __init__ (self,contacts,embedding,go_to_index,go_set,dir,godag,gosubdag,t5_path,esm_path,args):
         super().__init__()
@@ -122,9 +124,10 @@ class ProteinDataset(Dataset):
         return len(self.unvisited)
 
     def __getitem__(self,index):
-
+        # load the sample
         sample = torch.load(os.path.join(self.dir,self.unvisited[index]))
         # print(sample)
+        # Extract sequences, ID, GO annotations, and tensor data
         sequences = sample['sequence']
         id = sample['ID']
         goa = sample['goa']
@@ -136,6 +139,8 @@ class ProteinDataset(Dataset):
         if type(goa) == str:
             goa = ast.literal_eval(goa)
         tax = sample['OS']
+
+        # Get embeddings based on the specified model (T5 or ESM)
         if self.embedding == "t5":
             emb = self.get_t5(sequences=sequences)
         elif self.embedding == "esm":
@@ -143,17 +148,26 @@ class ProteinDataset(Dataset):
             contacts = torch.mean(output.attentions[len(output.attentions)-1].detach(),dim=1)[0][1:-1,1:-1]
             print(contacts.shape)
             emb = output.last_hidden_state[0]
+       
+        # Handle taxonomy indexing if available
         if self.tax_to_index is not None:
             x = (emb,self.tax_to_index(tax))
         else:
             x = emb
+
+        # Get the contact matrix
         if self.contacts == "esm":
             pass
         elif self.contacts == "alphafold":
             contacts = alphafold
             
+        # Get edge indices and attributes
         edge_index, edge_attr = self.get_edge_index_and_features(contacts)
+        
+        # Get target tensor
         y = self.get_target(goa)
+
+        # Return Data object (ensure it's serializable)
         data =  Data(x = x,edge_index = edge_index,edge_attr=edge_attr,y = y)
 
         return data
