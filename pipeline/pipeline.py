@@ -6,6 +6,8 @@ from pathlib import Path
 # Determine the root directory of your project
 root_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(root_dir))
+# This will make your root_dir be the NucleAIse repo.
+# The overall structure that is preferred has been outlined down below as "Directory Structure"
 
 import sqlite3
 import torch
@@ -46,8 +48,6 @@ from goatools.associations import get_tcntobj
 import dill as pickle # Import dill for serialization
 PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.7
 
-#Note for people cloning the repo, there are some places you will need to change paths in order to access
-# the correct files (data,IA,configs etc). For places that need modification, it will be marked with MODIFT->
 
 class Pipeline():
     def __init__(self,model,args):
@@ -106,33 +106,28 @@ class Pipeline():
         self.ontology = args.ontology
         self.node_limit = args.node_limit
         self.args = args
-        # MODIFY ->
-        # This should be a path to a directory called 'checkpoints' inside your repo directory
-        # self.checkpoints_path = "/home/aling/NucleAIse/checkpoints"
-        # MODIFY ->
-        # This should be a path to a config file (this is used for defining all the labels we choose), currently we are only training on BP ontology
-        # The path to the config on the cluster is /home/aling/config/bp_go.pt
-        # self.config_path = "/home/aling/config"
-        # MODIFY ->
-        # This should be a path to the IA weights text file (retrieved from kaggle)
-        # self.ia_path ='/home/aling/NucleAIse/IA/IA.txt'
-        # MODIFY ->
-        # This should be a path to the IA weights text file (retrieved from kaggle)
-        # The path to the config on the cluster is /home/aling/sp_per_file
-        # self.train_data_dir = "/home/aling/sp_per_file"
-        # self.val_data_dir = "/home/aling/set5_uniref50"
-        # self.t5_dir = "/home/aling/prot_t5_xl_half_uniref50-enc"
-        # self.esm_dir = "/home/aling/esm2_t33_650M_UR50D"
-        # Our root dir is this:
 
-        # Set paths dynamically
+        # Modularized paths
+        # This should be a path to a directory called 'checkpoints' inside your repo directory
         self.checkpoints_path = root_dir / "checkpoints"
+        # This should be a path to a config file (this is used for defining all the labels we choose), currently we are only training on BP ontology
         self.config_path = root_dir.parent / "config"
+        # This should be a path to the IA weights text file (retrieved from kaggle)
         self.ia_path = root_dir / "IA/IA.txt"
         self.train_data_dir = root_dir.parent / "sp_per_file"
         self.val_data_dir = root_dir.parent / "set5_uniref50"
         self.t5_dir = root_dir.parent / "prot_t5_xl_half_uniref50-enc"
         self.esm_dir = root_dir.parent / "esm2_t33_650M_UR50D"
+        """
+        Directory Structure:
+            username/
+                    ├── config/                         # copied the one in nucleAIse/pipeline/config
+                    ├── esm2_t33_650M_UR50D/            # get this from the NucleAIse drive.Link: https://drive.google.com/drive/folders/1lZT2QZOsimsXzZHneNfwyALrATSJxtei?usp=sharing
+                    ├── NucleAIse/                      # our repo
+                    ├── prot_t5_xl_half_uniref50-enc/   # from the NucleAIse drive 
+                    ├── set5_uniref50/                  # From our Dataset
+                    └── sp_per_file/                    # ^^^
+        """
 
     def load_checkpoint(model,optimizer):
         latest_step = 0
